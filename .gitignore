@@ -1,0 +1,50 @@
+# ---- secrets (NEVER commit) ----
+.env
+.env.*
+!.env.example
+web/.env
+web/.env.local
+web/.env.*.local
+
+# ---- Node / Next.js ----
+web/node_modules/
+web/.next/
+web/out/
+web/build/
+web/.turbo/
+web/next-env.d.ts
+web/tsconfig.tsbuildinfo
+
+# ---- Local SQLite database & user data ----
+web/data/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# ---- macOS ----
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ---- Editor / IDE ----
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ---- Logs & temp ----
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---- Claude Code runtime ----
+.claude/

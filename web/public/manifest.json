@@ -1,0 +1,39 @@
+{
+  "name": "认知对齐 - Cognitive Alignment",
+  "short_name": "认知对齐",
+  "description": "几分钟内建立结构化认知框架，让你能和任何领域的人自信对话",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FAFBFC",
+  "theme_color": "#4A6CF7",
+  "lang": "zh-CN",
+  "scope": "/",
+  "categories": ["education", "productivity", "reference"],
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-256.png",
+      "sizes": "256x256",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-384.png",
+      "sizes": "384x384",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

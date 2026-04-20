@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4A6CF7"/>
+      <stop offset="100%" stop-color="#FF8C42"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="110" fill="url(#bg)"/>
+  <!-- Brain-inspired glyph: two interlocking arcs + center dot -->
+  <g transform="translate(256 256)" fill="none" stroke="white" stroke-width="28" stroke-linecap="round">
+    <path d="M -110 -40 a 90 90 0 0 1 0 80 a 55 55 0 0 0 0 -80 Z" fill="white"/>
+    <path d="M 110 -40 a 90 90 0 0 0 0 80 a 55 55 0 0 1 0 -80 Z" fill="white"/>
+    <line x1="-55" y1="-8" x2="55" y2="-8"/>
+    <line x1="-55" y1="24" x2="55" y2="24"/>
+  </g>
+  <circle cx="256" cy="256" r="14" fill="white"/>
+</svg>
