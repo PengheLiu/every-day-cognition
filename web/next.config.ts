@@ -5,9 +5,9 @@ const nextConfig: NextConfig = {
   // without the full node_modules tree. Dockerfile copies only what's needed.
   output: "standalone",
 
-  // better-sqlite3 is a native module; keep it as an external dependency so
-  // Next's trace-based bundler doesn't try to webpack it.
-  serverExternalPackages: ["better-sqlite3"],
+  // node:sqlite is a built-in — explicitly mark as external so Next's
+  // bundler doesn't try to resolve/inline it
+  serverExternalPackages: ["node:sqlite"],
 
   async headers() {
     return [

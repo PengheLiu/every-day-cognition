@@ -1,5 +1,9 @@
 /**
  * SQLite database layer. Single shared connection per process.
+ * Uses Node 22+ built-in `node:sqlite` (no native compile — works on any
+ * GLIBC version). Node 22.x still requires --experimental-sqlite; start.sh
+ * injects it via NODE_OPTIONS.
+ *
  * Tables:
  *  - users          (id, phone, created_at)
  *  - sessions       (token, user_id, expires_at)
@@ -8,10 +12,37 @@
  *  - topic_stats    (topic, count, last_searched_at)
  *  - briefing_cache (topic, payload, expires_at)
  *  - expert_cache   (key, payload, expires_at)
+ *  - domain_search_cache (topic, results, expires_at)
+ *  - generation_jobs (id, user_id, topic, status, progress_message, events, ...)
  */
-import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
+
+// Turbopack and Webpack both try to resolve `node:sqlite` at build time and
+// fail ("Unsupported external type Url for commonjs reference"). We bypass
+// static analysis completely by doing the require through an indirect eval.
+// This resolves at runtime on the server only (never reaches the client).
+//
+// Minimal ambient typing for what we use; `@types/node` 22+ has real types
+// under `node:sqlite`, but importing them would re-trigger bundler scanning.
+interface SqliteStatement {
+  run(...params: unknown[]): { lastInsertRowid: number | bigint; changes: number };
+  get(...params: unknown[]): Record<string, unknown> | undefined;
+  all(...params: unknown[]): Record<string, unknown>[];
+}
+interface SqliteDatabase {
+  exec(sql: string): void;
+  prepare(sql: string): SqliteStatement;
+  close(): void;
+}
+interface SqliteModule {
+  DatabaseSync: new (filename: string) => SqliteDatabase;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const nodeRequire: (m: string) => any = eval("require");
+const { DatabaseSync } = nodeRequire("node:sqlite") as SqliteModule;
+type DatabaseSyncType = SqliteDatabase;
 
 const DATA_DIR = path.join(process.cwd(), "data");
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -21,22 +52,22 @@ const DB_PATH = path.join(DATA_DIR, "app.db");
 // Use a global singleton to survive Next.js dev hot reloads
 declare global {
   // eslint-disable-next-line no-var
-  var __ca_db: Database.Database | undefined;
+  var __ca_db: DatabaseSyncType | undefined;
 }
 
-export const db: Database.Database =
+export const db: DatabaseSyncType =
   global.__ca_db ??
   (() => {
-    const instance = new Database(DB_PATH);
-    instance.pragma("journal_mode = WAL");
-    instance.pragma("foreign_keys = ON");
+    const instance = new DatabaseSync(DB_PATH);
+    instance.exec("PRAGMA journal_mode = WAL");
+    instance.exec("PRAGMA foreign_keys = ON");
     initSchema(instance);
     return instance;
   })();
 
 if (process.env.NODE_ENV !== "production") global.__ca_db = db;
 
-function initSchema(d: Database.Database) {
+function initSchema(d: DatabaseSyncType) {
   d.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
@@ -244,7 +275,7 @@ export function getUserHistory(userId: string, limit = 50): HistoryItem[] {
     .prepare(
       "SELECT topic, created_at FROM search_history WHERE user_id = ? ORDER BY created_at DESC LIMIT ?"
     )
-    .all(userId, limit) as HistoryItem[];
+    .all(userId, limit) as unknown as HistoryItem[];
 }
 
 export interface TrendingItem {
@@ -258,7 +289,7 @@ export function getTrendingTopics(limit = 10, sinceMs = 7 * 24 * 60 * 60 * 1000)
     .prepare(
       "SELECT topic, count FROM topic_stats WHERE last_searched_at > ? ORDER BY count DESC, last_searched_at DESC LIMIT ?"
     )
-    .all(cutoff, limit) as TrendingItem[];
+    .all(cutoff, limit) as unknown as TrendingItem[];
 }
 
 // ---------- Generation jobs ----------

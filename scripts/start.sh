@@ -28,6 +28,8 @@ HOST="${HOST:-0.0.0.0}"
 export PORT
 export HOSTNAME="$HOST"
 export NODE_ENV="${NODE_ENV:-production}"
+# node:sqlite is experimental in Node 22.x — enable via flag (stable in 24+)
+export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--experimental-sqlite --no-warnings=ExperimentalWarning"
 
 # Dev mode overrides NODE_ENV
 if [[ "$MODE" == "dev" || "$MODE" == "development" ]]; then
@@ -118,16 +120,8 @@ if [[ ! -f ".env.local" && ! -f ".env" ]]; then
 fi
 
 # ---------- install deps ----------
-# On old distros (CentOS 7), better-sqlite3's prebuilt binary may not match
-# the glibc version → it'll try to compile from source, which needs a modern
-# C++ toolchain. Warn early so the failure mode is obvious.
-if [[ -f "/etc/os-release" ]] && grep -qE 'CentOS Linux 7|Red Hat Enterprise Linux (Server|Client)? *(release)? *7' /etc/os-release 2>/dev/null; then
-  if ! command -v g++ >/dev/null 2>&1 || ! g++ -dumpversion 2>/dev/null | awk -F. '{exit ($1>=8) ? 0 : 1}'; then
-    warn "CentOS 7 + 老旧 g++ 可能无法编译 better-sqlite3 native 模块。"
-    warn "  若安装失败，请运行: sudo yum install -y centos-release-scl && sudo yum install -y devtoolset-11 && scl enable devtoolset-11 bash"
-  fi
-fi
-
+# (We use Node 22's built-in `node:sqlite`, so no more better-sqlite3 native
+# compile — any Linux distro works without devtoolset or glibc upgrades.)
 if [[ ! -d "node_modules" || "package.json" -nt "node_modules/.package-lock.json" ]]; then
   log "安装依赖 (npm ci)..."
   if [[ -f "package-lock.json" ]]; then
