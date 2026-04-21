@@ -89,13 +89,47 @@ export async function getCurrentUser(): Promise<User | null> {
   return getUserByToken(token);
 }
 
+/**
+ * Decide whether to mark the session cookie `secure`.
+ *
+ * `secure: true` means the browser will only send the cookie over HTTPS.
+ * If the app is deployed on plain HTTP (common in internal / container
+ * environments), forcing `secure` silently breaks login — the browser
+ * accepts Set-Cookie but never returns the cookie on subsequent requests.
+ *
+ * Resolution order:
+ *   1. Explicit `SECURE_COOKIES` env var wins (true/false)
+ *   2. Otherwise, inspect the current request's protocol. If the inbound
+ *      request came via HTTPS (direct or via x-forwarded-proto), use secure.
+ *   3. Default to NOT secure so HTTP deployments work out of the box.
+ */
+async function shouldUseSecureCookie(): Promise<boolean> {
+  const override = process.env.SECURE_COOKIES?.toLowerCase();
+  if (override === "true" || override === "1") return true;
+  if (override === "false" || override === "0") return false;
+
+  // Probe current request headers
+  try {
+    const { headers } = await import("next/headers");
+    const h = await headers();
+    const forwardedProto = h.get("x-forwarded-proto");
+    if (forwardedProto) return forwardedProto.split(",")[0].trim() === "https";
+    // Next.js also exposes the URL via x-forwarded-host; fall through otherwise
+  } catch {
+    // ignore
+  }
+
+  // Default: NOT secure (works for plain HTTP). For HTTPS prod, set SECURE_COOKIES=true.
+  return false;
+}
+
 /** Set session cookie on response. */
 export async function setSessionCookie(token: string) {
   const cookieStore = await cookies();
   cookieStore.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: await shouldUseSecureCookie(),
     maxAge: Math.floor(SESSION_TTL_MS / 1000),
     path: "/",
   });
