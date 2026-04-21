@@ -31,6 +31,15 @@ export NODE_ENV="${NODE_ENV:-production}"
 # node:sqlite is experimental in Node 22.x — enable via flag (stable in 24+)
 export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--experimental-sqlite --no-warnings=ExperimentalWarning"
 
+# If a corporate HTTP proxy is set but NO_PROXY is empty, auto-exempt common
+# internal hostnames so Friday / MT AIGC aren't routed through the external proxy.
+if [[ -n "${HTTP_PROXY:-}${HTTPS_PROXY:-}${http_proxy:-}${https_proxy:-}" ]]; then
+  if [[ -z "${NO_PROXY:-}${no_proxy:-}" ]]; then
+    export NO_PROXY="localhost,127.0.0.1,.sankuai.com,.meituan.com"
+    export no_proxy="$NO_PROXY"
+  fi
+fi
+
 # Dev mode overrides NODE_ENV
 if [[ "$MODE" == "dev" || "$MODE" == "development" ]]; then
   MODE="dev"
