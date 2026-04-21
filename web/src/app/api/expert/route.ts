@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { chatCompletion } from "@/lib/openrouter";
+import { chatCompletion, FAST_MODEL } from "@/lib/openrouter";
 import { multiSearch, findScholarProfileUrl } from "@/lib/search";
 import {
   buildExpertDetailQueries,
@@ -12,11 +12,12 @@ import type { ExpertDetail } from "@/lib/types";
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
-  const { name, englishName, title, org, topic } = (await req.json()) as {
+  const { name, englishName, title, org, englishOrg, topic } = (await req.json()) as {
     name: string;
     englishName?: string;
     title: string;
     org: string;
+    englishOrg?: string;
     topic: string;
   };
 
@@ -34,7 +35,7 @@ export async function POST(req: NextRequest) {
     // Run expert detail search and Scholar profile lookup in parallel
     const [searchResults, scholarProfileUrl] = await Promise.all([
       multiSearch(buildExpertDetailQueries(name, englishName, org, topic), { topK: 5 }),
-      findScholarProfileUrl(name, englishName, org).catch(() => null),
+      findScholarProfileUrl(name, englishName, org, englishOrg, topic).catch(() => null),
     ]);
 
     if (searchResults.length === 0) {
@@ -68,7 +69,7 @@ export async function POST(req: NextRequest) {
 
     const resp = await chatCompletion(
       [{ role: "user", content: extractionPrompt }],
-      { temperature: 0.3, maxTokens: 3000 }
+      { temperature: 0.3, maxTokens: 3000, model: FAST_MODEL }
     );
 
     let parsed: Partial<ExpertDetail> = {};

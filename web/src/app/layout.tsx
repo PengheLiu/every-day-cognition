@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { TopBar } from "@/components/TopBar";
 import { InstallPrompt } from "@/components/InstallPrompt";
+import { JobDock } from "@/components/JobDock";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -15,13 +16,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "认知对齐 - Cognitive Alignment",
+  title: "认知学习 - Cognitive Learning",
   description: "几分钟内建立结构化认知框架，让你能和任何领域的人自信对话",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "认知对齐",
+    title: "认知学习",
   },
   icons: {
     icon: [
@@ -63,6 +64,7 @@ export default function RootLayout({
         <TopBar />
         {children}
         <InstallPrompt />
+        <JobDock />
       </body>
     </html>
   );

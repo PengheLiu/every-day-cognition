@@ -1,4 +1,4 @@
-/* 认知对齐 — minimal service worker
+/* 认知学习 — minimal service worker
  * Strategy:
  *  - App shell (/, /me, /login, /briefing): network-first with cache fallback
  *  - /api/*: always network (SQLite cache layer already handles server-side caching)

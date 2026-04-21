@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Input } from "@/components/ui/input";
 
@@ -46,8 +46,11 @@ interface HistoryItem {
   created_at: number;
 }
 
-export default function Home() {
-  const [topic, setTopic] = useState("");
+function HomeContent() {
+  const searchParams = useSearchParams();
+  // Pre-fill with `?topic=X` (e.g. after user cancels and wants to edit)
+  const initialTopic = searchParams.get("topic") || "";
+  const [topic, setTopic] = useState(initialTopic);
   const [trending, setTrending] = useState<TrendingItem[]>([]);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [loggedIn, setLoggedIn] = useState<boolean | undefined>(undefined);
@@ -55,7 +58,16 @@ export default function Home() {
   const router = useRouter();
 
   useEffect(() => {
-    const t = setTimeout(() => inputRef.current?.focus(), 100);
+    const t = setTimeout(() => {
+      const input = inputRef.current;
+      if (!input) return;
+      input.focus();
+      // Put cursor at end if prefilled (easier to edit/append)
+      if (initialTopic) {
+        const len = input.value.length;
+        input.setSelectionRange(len, len);
+      }
+    }, 100);
     (async () => {
       try {
         const [meRes, trendRes, histRes] = await Promise.all([
@@ -74,7 +86,7 @@ export default function Home() {
       }
     })();
     return () => clearTimeout(t);
-  }, []);
+  }, [initialTopic]);
 
   const handleSubmit = (value: string) => {
     const trimmed = value.trim();
@@ -95,10 +107,10 @@ export default function Home() {
         <div className="text-center space-y-4 pt-6">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-medium">
             <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
-            基于真实大佬观点的认知对齐
+            基于真实大佬观点的认知学习
           </div>
           <h1 className="text-5xl font-bold tracking-tight">
-            认知<span className="text-primary">对齐</span>
+            认知<span className="text-primary">学习</span>
           </h1>
           <p className="text-lg text-muted-foreground max-w-md mx-auto">
             几分钟内建立结构化认知框架，让你能和任何领域的人自信对话
@@ -124,7 +136,7 @@ export default function Home() {
               onClick={() => handleSubmit(topic)}
               disabled={!topic.trim()}
               className="absolute right-3 top-1/2 -translate-y-1/2 w-11 h-11 flex items-center justify-center rounded-lg bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
-              aria-label="开始对齐认知"
+              aria-label="开始学习这个领域"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M5 12h14" />
@@ -233,5 +245,19 @@ export default function Home() {
         </div>
       </div>
     </main>
+  );
+}
+
+export default function Home() {
+  return (
+    <Suspense
+      fallback={
+        <main className="flex-1 flex items-center justify-center">
+          <div className="w-6 h-6 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+        </main>
+      }
+    >
+      <HomeContent />
+    </Suspense>
   );
 }

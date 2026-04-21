@@ -34,7 +34,8 @@ export interface ExpertInfo {
   name: string;
   englishName?: string;
   title: string;    // 职位/头衔
-  org: string;      // 所属机构
+  org: string;      // 所属机构（中文或原文）
+  englishOrg?: string; // 英文机构名（用于 Scholar/Wikipedia 等国际检索）
   reason: string;   // 为什么是这个领域的关键人物
 }
 

@@ -86,6 +86,30 @@ function initSchema(d: Database.Database) {
       payload TEXT NOT NULL,
       expires_at INTEGER NOT NULL
     );
+
+    -- Phase A domain-level search results, shared across users for a topic.
+    -- Much cheaper than re-running 8 Bing/Baidu searches every time.
+    CREATE TABLE IF NOT EXISTS domain_search_cache (
+      topic TEXT PRIMARY KEY,
+      results TEXT NOT NULL,
+      expires_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS generation_jobs (
+      id TEXT PRIMARY KEY,
+      user_id TEXT,                 -- nullable: allow anonymous
+      topic TEXT NOT NULL,
+      status TEXT NOT NULL,         -- pending | searching | generating | done | error | cancelled
+      progress_message TEXT,        -- latest human-readable status
+      events TEXT,                  -- JSON array: [{type, message, ts, ...}]
+      result_topic TEXT,            -- the topic key used for briefing_cache lookup (normalized)
+      error TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_jobs_user_created ON generation_jobs(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_jobs_user_status ON generation_jobs(user_id, status);
+    CREATE INDEX IF NOT EXISTS idx_jobs_topic ON generation_jobs(topic);
   `);
 }
 
@@ -153,6 +177,33 @@ export function setCachedExpert(
   ).run(key, JSON.stringify(payload), Date.now() + ttlMs);
 }
 
+/** Phase A domain search results — shared across users per topic. */
+export function getCachedDomainSearch<T>(topic: string): T | null {
+  const row = db
+    .prepare("SELECT results, expires_at FROM domain_search_cache WHERE topic = ?")
+    .get(normalizeTopic(topic)) as { results: string; expires_at: number } | undefined;
+  if (!row) return null;
+  if (row.expires_at < Date.now()) {
+    db.prepare("DELETE FROM domain_search_cache WHERE topic = ?").run(normalizeTopic(topic));
+    return null;
+  }
+  try {
+    return JSON.parse(row.results) as T;
+  } catch {
+    return null;
+  }
+}
+
+export function setCachedDomainSearch<T>(
+  topic: string,
+  results: T,
+  ttlMs = 24 * 60 * 60 * 1000 // 1 day; Phase A queries aren't time-sensitive within a day
+) {
+  db.prepare(
+    "INSERT OR REPLACE INTO domain_search_cache (topic, results, expires_at) VALUES (?, ?, ?)"
+  ).run(normalizeTopic(topic), JSON.stringify(results), Date.now() + ttlMs);
+}
+
 // ---------- History + Trending ----------
 
 export function recordSearch(userId: string | null, topic: string) {
@@ -209,3 +260,189 @@ export function getTrendingTopics(limit = 10, sinceMs = 7 * 24 * 60 * 60 * 1000)
     )
     .all(cutoff, limit) as TrendingItem[];
 }
+
+// ---------- Generation jobs ----------
+
+export type JobStatus = "pending" | "searching" | "generating" | "done" | "error" | "cancelled";
+
+export interface JobEvent {
+  type: string;
+  message: string;
+  ts: number;
+  expertsFound?: number;
+  quotesFound?: number;
+}
+
+export interface GenerationJob {
+  id: string;
+  user_id: string | null;
+  topic: string;
+  status: JobStatus;
+  progress_message: string | null;
+  events: JobEvent[];
+  result_topic: string | null;
+  error: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+const ACTIVE_STATUSES: JobStatus[] = ["pending", "searching", "generating"];
+const STUCK_TIMEOUT_MS = 5 * 60 * 1000; // mark as error if no updates for 5 min
+const MAX_ACTIVE_PER_USER = 5;
+
+/** Soft-expire jobs that haven't been updated in a while (server restart, crash, etc.) */
+function expireStuckJobs(userId: string | null) {
+  const cutoff = Date.now() - STUCK_TIMEOUT_MS;
+  if (userId) {
+    db.prepare(
+      `UPDATE generation_jobs SET status = 'error', error = 'timeout (no progress updates)', updated_at = ?
+       WHERE user_id = ? AND status IN ('pending','searching','generating') AND updated_at < ?`
+    ).run(Date.now(), userId, cutoff);
+  } else {
+    db.prepare(
+      `UPDATE generation_jobs SET status = 'error', error = 'timeout (no progress updates)', updated_at = ?
+       WHERE user_id IS NULL AND status IN ('pending','searching','generating') AND updated_at < ?`
+    ).run(Date.now(), cutoff);
+  }
+}
+
+export function countActiveJobs(userId: string | null): number {
+  expireStuckJobs(userId);
+  const placeholders = ACTIVE_STATUSES.map(() => "?").join(",");
+  const row = userId
+    ? db
+        .prepare(
+          `SELECT COUNT(*) as cnt FROM generation_jobs WHERE user_id = ? AND status IN (${placeholders})`
+        )
+        .get(userId, ...ACTIVE_STATUSES)
+    : db
+        .prepare(
+          `SELECT COUNT(*) as cnt FROM generation_jobs WHERE user_id IS NULL AND status IN (${placeholders})`
+        )
+        .get(...ACTIVE_STATUSES);
+  return (row as { cnt: number }).cnt;
+}
+
+export function getActiveJobLimit(): number {
+  return MAX_ACTIVE_PER_USER;
+}
+
+/** Look up an existing active/recent job for a (user, topic) pair — avoids duplicates. */
+export function findReusableJob(userId: string | null, topic: string): GenerationJob | null {
+  const t = normalizeTopic(topic);
+  // Prefer an active job; otherwise a recent done job (within 10 min) can be reused
+  const recentCutoff = Date.now() - 10 * 60 * 1000;
+  const row = userId
+    ? db
+        .prepare(
+          `SELECT * FROM generation_jobs
+           WHERE user_id = ? AND topic = ? AND (status IN ('pending','searching','generating') OR (status = 'done' AND updated_at > ?))
+           ORDER BY created_at DESC LIMIT 1`
+        )
+        .get(userId, t, recentCutoff)
+    : db
+        .prepare(
+          `SELECT * FROM generation_jobs
+           WHERE user_id IS NULL AND topic = ? AND (status IN ('pending','searching','generating') OR (status = 'done' AND updated_at > ?))
+           ORDER BY created_at DESC LIMIT 1`
+        )
+        .get(t, recentCutoff);
+  return row ? hydrateJob(row as RawJob) : null;
+}
+
+type RawJob = Omit<GenerationJob, "events"> & { events: string | null };
+
+function hydrateJob(raw: RawJob): GenerationJob {
+  let events: JobEvent[] = [];
+  try {
+    events = raw.events ? JSON.parse(raw.events) : [];
+  } catch {
+    events = [];
+  }
+  return { ...raw, events };
+}
+
+export function createJob(userId: string | null, topic: string): GenerationJob {
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  const t = normalizeTopic(topic);
+  db.prepare(
+    `INSERT INTO generation_jobs (id, user_id, topic, status, progress_message, events, result_topic, error, created_at, updated_at)
+     VALUES (?, ?, ?, 'pending', ?, '[]', NULL, NULL, ?, ?)`
+  ).run(id, userId, t, "任务已创建，等待执行...", now, now);
+  return getJob(id)!;
+}
+
+export function getJob(id: string): GenerationJob | null {
+  const row = db.prepare("SELECT * FROM generation_jobs WHERE id = ?").get(id) as RawJob | undefined;
+  return row ? hydrateJob(row) : null;
+}
+
+export function listUserJobs(
+  userId: string | null,
+  options: { limit?: number; onlyActive?: boolean } = {}
+): GenerationJob[] {
+  expireStuckJobs(userId);
+  const { limit = 20, onlyActive = false } = options;
+  const statusFilter = onlyActive
+    ? `AND status IN ('${ACTIVE_STATUSES.join("','")}')`
+    : "";
+  const rows = userId
+    ? db
+        .prepare(
+          `SELECT * FROM generation_jobs WHERE user_id = ? ${statusFilter} ORDER BY created_at DESC LIMIT ?`
+        )
+        .all(userId, limit)
+    : db
+        .prepare(
+          `SELECT * FROM generation_jobs WHERE user_id IS NULL ${statusFilter} ORDER BY created_at DESC LIMIT ?`
+        )
+        .all(limit);
+  return (rows as RawJob[]).map(hydrateJob);
+}
+
+export function updateJob(
+  id: string,
+  patch: Partial<Pick<GenerationJob, "status" | "progress_message" | "result_topic" | "error">>
+) {
+  const now = Date.now();
+  const fields: string[] = ["updated_at = ?"];
+  const values: (string | number | null)[] = [now];
+  if (patch.status !== undefined) {
+    fields.push("status = ?");
+    values.push(patch.status);
+  }
+  if (patch.progress_message !== undefined) {
+    fields.push("progress_message = ?");
+    values.push(patch.progress_message);
+  }
+  if (patch.result_topic !== undefined) {
+    fields.push("result_topic = ?");
+    values.push(patch.result_topic);
+  }
+  if (patch.error !== undefined) {
+    fields.push("error = ?");
+    values.push(patch.error);
+  }
+  values.push(id);
+  db.prepare(`UPDATE generation_jobs SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+}
+
+export function appendJobEvent(id: string, event: Omit<JobEvent, "ts">) {
+  const job = getJob(id);
+  if (!job) return;
+  const events = [...job.events, { ...event, ts: Date.now() }];
+  db.prepare("UPDATE generation_jobs SET events = ?, updated_at = ? WHERE id = ?").run(
+    JSON.stringify(events),
+    Date.now(),
+    id
+  );
+}
+
+export function cancelJob(id: string) {
+  updateJob(id, { status: "cancelled", error: "用户取消" });
+}
+
+// Node 22+ has crypto as a global, but some env might need import
+import crypto from "crypto";
+

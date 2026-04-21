@@ -1,6 +1,14 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Produce .next/standalone/ — a self-contained server bundle that can run
+  // without the full node_modules tree. Dockerfile copies only what's needed.
+  output: "standalone",
+
+  // better-sqlite3 is a native module; keep it as an external dependency so
+  // Next's trace-based bundler doesn't try to webpack it.
+  serverExternalPackages: ["better-sqlite3"],
+
   async headers() {
     return [
       {

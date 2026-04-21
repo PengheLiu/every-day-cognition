@@ -92,7 +92,7 @@ function LoginContent() {
       <div className="w-full max-w-sm rounded-2xl border bg-card p-6 space-y-5 shadow-sm">
         <div className="text-center space-y-1">
           <div className="text-3xl">🧠</div>
-          <h1 className="text-xl font-bold">登录认知对齐</h1>
+          <h1 className="text-xl font-bold">登录认知学习</h1>
           <p className="text-xs text-muted-foreground">开发环境：验证码固定为 123456</p>
         </div>
 

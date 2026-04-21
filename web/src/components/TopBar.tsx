@@ -12,7 +12,7 @@ export function TopBar() {
             🧠
           </div>
           <span className="font-semibold group-hover:text-primary transition-colors">
-            认知对齐
+            认知学习
           </span>
         </Link>
         <UserChip />

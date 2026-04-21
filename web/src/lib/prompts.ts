@@ -1,5 +1,5 @@
 /**
- * System prompts for the cognitive alignment engine.
+ * System prompts for the cognitive learning engine.
  */
 
 /** Step 0: Queries to find domain-level content — balanced Chinese + English */
@@ -40,7 +40,7 @@ ${resultsText}
 5. 不要捏造英文名；如果搜索结果里没有英文名，englishName 字段留空字符串
 
 提取目标：
-- 尽量提取 10-15 位，但宁少勿滥
+- 尽量提取 **12-18 位**（多一点更有代表性；后续会自动验证和剔除站不住的候选）
 - 覆盖不同角色（创始人/CEO、学者/教授、研究员、意见领袖、畅销书作者、资深从业者）
 - **中外兼顾**：必须同时包含**国外专家**（例如该领域的国际权威、美欧知名公司创始人、海外顶尖大学教授）和**中国专家**（国内公司创始人、高校学者、产业推动者）
 - **国外专家至少占 40%**（如果搜索结果里有相关信息）
@@ -54,8 +54,9 @@ ${resultsText}
   {
     "name": "中文名（从搜索结果里取得的）",
     "englishName": "如果搜索结果里有，否则空字符串",
-    "title": "具体职务（从搜索结果取得，如 创始人兼CEO / 教授 / 首席科学家）",
-    "org": "所属机构（从搜索结果取得；若搜索结果未明示则留空）",
+    "title": "具体职务（如 创始人兼CEO / 教授 / 首席科学家）",
+    "org": "所属机构（中文或原文，如 清华大学 / OpenAI）",
+    "englishOrg": "机构的**英文名**（如 Tsinghua University / OpenAI / Stanford / DeepMind）。如果 org 本来就是英文就复制过来；如果搜索结果能推断则给出；否则留空",
     "reason": "一句话说明为什么在该领域重要（基于搜索结果，不要虚构）",
     "evidenceQuote": "搜索结果中支撑此人身份的一句原文片段（≤80字）"
   }
@@ -151,7 +152,7 @@ export function buildBriefingPrompt(
     })
     .join("\n\n");
 
-  return `你是一个顶级的认知对齐专家。用户想快速了解「${topic}」这个领域，目标是在几分钟内建立结构化认知框架，达到"能和该领域的人自信对话"的水平（L3 水平）。
+  return `你是一个顶级的认知学习专家。用户想快速了解「${topic}」这个领域，目标是在几分钟内建立结构化认知框架，达到"能和该领域的人自信对话"的水平（L3 水平）。
 
 以下是我们搜索到的该领域大佬的真实观点（这些观点有真实出处，请务必充分使用）：
 
@@ -346,6 +347,56 @@ ${resultsText}
   ],
   "links": [{"label": "...", "url": "..."}],
   "disambiguation": ""
+}
+
+立即输出 JSON，首字符必须是 \`{\`。`;
+}
+
+/**
+ * Prompt for generating just the briefing's "meta" fields:
+ * oneLiner + glossary + dialogueTips. Lightweight (~2-3k tokens output).
+ * Use with the dimension prompts in parallel for fast briefing assembly.
+ */
+export function buildBriefingMetaPrompt(
+  topic: string,
+  expertsWithQuotes: {
+    expert: { name: string; title: string; org: string };
+    quotes: { quote: string; sourceType: string; sourceDate?: string; dimension: string }[];
+  }[]
+): string {
+  const quotesContext = expertsWithQuotes
+    .map((eq) => {
+      const qs = eq.quotes
+        .slice(0, 3)
+        .map((q) => `  - "${q.quote.slice(0, 120)}" (${q.sourceType})`)
+        .join("\n");
+      return `${eq.expert.name} (${eq.expert.title}):\n${qs || "  (暂无观点)"}`;
+    })
+    .join("\n\n");
+
+  return `基于该领域真实大佬的观点，为「${topic}」生成认知简报的**整体概览**部分（不含 7 维度详情）。
+
+大佬观点样本（仅供上下文参考，不需要直接引用）：
+${quotesContext}
+
+你只需生成 3 个字段：
+
+1. **oneLiner**: 一句话速览（不超过 40 字），直击「${topic}」的本质
+2. **glossary**: 8-12 个关键术语，每条含 term + definition（≤40 字，通俗解释）
+3. **dialogueTips**: 2-3 个典型对话场景，每个场景包含 scenario（一句话描述）和 questions（3 个可以问的好问题）
+
+硬性规则：
+- 整个回复必须是**合法 JSON**，从 \`{\` 开始到 \`}\` 结束
+- 不要 markdown 围栏、不要多余文字
+- 字符串内英文引号用 \\" 转义，不要换行符
+
+输出结构：
+{
+  "oneLiner": "...",
+  "glossary": [{ "term": "...", "definition": "..." }],
+  "dialogueTips": [
+    { "scenario": "...", "questions": ["...", "...", "..."] }
+  ]
 }
 
 立即输出 JSON，首字符必须是 \`{\`。`;

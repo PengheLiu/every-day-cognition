@@ -8,16 +8,14 @@ import { DialogueTipsSection } from "@/components/DialogueTips";
 import { GeneratingStatus } from "@/components/GeneratingStatus";
 import { ChatPanel } from "@/components/ChatPanel";
 import { ExpertDetailModal } from "@/components/ExpertDetailModal";
+import { ShareButton } from "@/components/ShareButton";
 import type {
   Briefing,
   SearchProgressEvent,
-  SearchResult,
-  DimensionKey,
   DimensionContent,
   ExpertInfo,
 } from "@/lib/types";
 import { DIMENSION_META } from "@/lib/types";
-import { parseResilientJSON } from "@/lib/json-repair";
 
 function BriefingContent() {
   const searchParams = useSearchParams();
@@ -27,14 +25,16 @@ function BriefingContent() {
   const [phase, setPhase] = useState<"searching" | "generating" | "done" | "error">("searching");
   const [searchEvents, setSearchEvents] = useState<SearchProgressEvent[]>([]);
   const [briefing, setBriefing] = useState<Briefing | null>(null);
-  const [rawText, setRawText] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
   const [heroImageFailed, setHeroImageFailed] = useState(false);
   // Chat / follow-up UI is temporarily disabled; kept wired for easy re-enable.
   const [chatOpen, setChatOpen] = useState(false);
   const [chatInitialQ, setChatInitialQ] = useState<string | undefined>();
   const [selectedExpert, setSelectedExpert] = useState<ExpertInfo | null>(null);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
   const hasStarted = useRef(false);
+  const cancelledRef = useRef(false);
 
   const fetchHeroImage = useCallback(async (topic: string) => {
     try {
@@ -68,246 +68,6 @@ function BriefingContent() {
     },
     []
   );
-
-  const startGeneration = useCallback(async () => {
-    if (!topic || hasStarted.current) return;
-    hasStarted.current = true;
-
-    // Phase 0: Check cache first (1-day TTL on server)
-    try {
-      const cacheRes = await fetch(
-        `/api/briefing-bundle?topic=${encodeURIComponent(topic)}`
-      );
-      if (cacheRes.ok) {
-        const { bundle } = await cacheRes.json();
-        if (bundle && bundle.dimensions?.length) {
-          setBriefing(bundle);
-          setPhase("done");
-          // Still record the visit as a search event (history)
-          fetch("/api/briefing-bundle", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ topic, bundle }),
-          }).catch(() => {});
-          // If the cached bundle has no images yet, load them
-          if (!bundle.heroImageUrl) loadImages(bundle);
-          return;
-        }
-      }
-    } catch {
-      // fall through to fresh generation
-    }
-
-    // Phase 1: Search
-    setPhase("searching");
-    let searchResult: SearchResult = { experts: [], quotes: [] };
-
-    try {
-      const searchRes = await fetch("/api/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic }),
-      });
-      if (!searchRes.ok) throw new Error("Search failed");
-
-      const reader = searchRes.body!.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith("data: ")) continue;
-          try {
-            const event = JSON.parse(trimmed.slice(6));
-            if (event.type === "done" && event.result) {
-              searchResult = event.result;
-            } else if (event.type) {
-              setSearchEvents((prev) => [...prev, event]);
-            }
-          } catch {
-            // skip
-          }
-        }
-      }
-    } catch (err) {
-      console.error("Search error:", err);
-    }
-
-    // Phase 2: Briefing generation
-    setPhase("generating");
-
-    // Kick off hero image fetch in parallel with briefing gen (needs only topic)
-    fetchHeroImage(topic).then((url) => {
-      if (url) {
-        setBriefing((prev) => (prev ? { ...prev, heroImageUrl: url } : prev));
-      } else {
-        setHeroImageFailed(true);
-      }
-    });
-
-    try {
-      const briefingRes = await fetch("/api/briefing", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          topic,
-          experts: searchResult.experts,
-          quotes: searchResult.quotes,
-        }),
-      });
-
-      if (!briefingRes.ok) {
-        const body = await briefingRes.text();
-        let hint = "生成简报时出错";
-        if (body.includes("fetch failed") || body.includes("ETIMEDOUT")) {
-          hint = "网络连接到 LLM 服务不稳定";
-        } else if (body.includes("429") || body.includes("rate")) {
-          hint = "LLM 服务限流，稍后再试";
-        } else if (body.includes("401") || body.includes("403")) {
-          hint = "LLM API 授权失败，请检查 key";
-        }
-        throw new Error(`${hint} (${body.slice(0, 120)})`);
-      }
-
-      const briefingReader = briefingRes.body!.getReader();
-      const briefingDecoder = new TextDecoder();
-      let accumulated = "";
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await briefingReader.read();
-        if (done) break;
-
-        buffer += briefingDecoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith("data: ")) continue;
-          try {
-            const data = JSON.parse(trimmed.slice(6));
-            if (data.text) {
-              accumulated += data.text;
-              setRawText(accumulated);
-            }
-          } catch {
-            // skip
-          }
-        }
-      }
-
-      // Parse final briefing (resilient to truncation/minor issues)
-      try {
-        const parsed = parseResilientJSON(accumulated) as Partial<Briefing>;
-        const finalBriefing: Briefing = {
-          topic: parsed.topic || topic,
-          oneLiner: parsed.oneLiner || "",
-          dimensions: parsed.dimensions || [],
-          glossary: parsed.glossary || [],
-          dialogueTips: parsed.dialogueTips || [],
-          experts: searchResult.experts,
-        };
-        setBriefing(finalBriefing);
-        setPhase("done");
-
-        // Phase 2.5: Backfill missing dimensions (if any) — parallel, non-blocking.
-        // Records the FULL bundle to cache only after backfills complete.
-        const ALL_DIM_KEYS: DimensionKey[] = [
-          "concept", "mechanism", "history", "ecosystem",
-          "application", "trend", "controversy",
-        ];
-        const presentKeys = new Set(
-          (finalBriefing.dimensions || []).map((d: DimensionContent) => d.key)
-        );
-        const missingKeys = ALL_DIM_KEYS.filter((k) => !presentKeys.has(k));
-
-        const finalizeAndCache = (bundle: Briefing) => {
-          fetch("/api/briefing-bundle", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ topic, bundle }),
-          }).catch(() => {});
-        };
-
-        if (missingKeys.length > 0) {
-          console.log(`[briefing] Backfilling ${missingKeys.length} missing dimensions:`, missingKeys);
-          const backfills = missingKeys.map(async (key) => {
-            try {
-              const res = await fetch("/api/dimension", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  topic,
-                  dimensionKey: key,
-                  dimensionLabel: DIMENSION_META[key]?.label || key,
-                  oneLiner: finalBriefing.oneLiner,
-                  quotes: searchResult.quotes,
-                }),
-              });
-              if (!res.ok) return null;
-              const data = await res.json();
-              return data.dimension as DimensionContent | null;
-            } catch {
-              return null;
-            }
-          });
-
-          Promise.all(backfills).then((results) => {
-            const newDims = results.filter((d): d is DimensionContent => !!d && !!d.summary);
-            if (newDims.length > 0) {
-              setBriefing((prev) => {
-                if (!prev) return prev;
-                const merged = [...prev.dimensions];
-                // Insert each backfilled dim at its canonical position
-                for (const d of newDims) {
-                  if (!merged.find((x) => x.key === d.key)) merged.push(d);
-                }
-                // Sort by canonical order
-                merged.sort(
-                  (a, b) =>
-                    ALL_DIM_KEYS.indexOf(a.key) - ALL_DIM_KEYS.indexOf(b.key)
-                );
-                const updated = { ...prev, dimensions: merged };
-                finalizeAndCache(updated);
-                return updated;
-              });
-            } else {
-              finalizeAndCache(finalBriefing);
-            }
-          });
-        } else {
-          finalizeAndCache(finalBriefing);
-        }
-
-        // Phase 3: Load images in parallel (non-blocking)
-        loadImages(finalBriefing);
-      } catch (parseErr) {
-        console.error("Failed to parse briefing JSON:", parseErr);
-        console.error("Raw accumulated length:", accumulated.length);
-        // Post raw content to server so we can inspect it
-        fetch("/api/debug-log", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ topic, content: accumulated, error: String(parseErr) }),
-        }).catch(() => {});
-        setPhase("done");
-      }
-    } catch (err) {
-      console.error("Generation error:", err);
-      setErrorMsg(err instanceof Error ? err.message : String(err));
-      setPhase("error");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topic]);
 
   const loadImages = useCallback(
     async (finalBriefing: Briefing) => {
@@ -345,15 +105,157 @@ function BriefingContent() {
     [fetchHeroImage, fetchDimensionImage]
   );
 
+  // Load the cached bundle and render it. Used both after a job finishes and
+  // as a fast-path when the topic is already cached on first visit.
+  const loadCachedBundle = useCallback(
+    async (topicArg: string): Promise<boolean> => {
+      const res = await fetch(
+        `/api/briefing-bundle?topic=${encodeURIComponent(topicArg)}`
+      );
+      if (!res.ok) return false;
+      const { bundle } = await res.json();
+      if (!bundle || !bundle.dimensions?.length) return false;
+      setBriefing(bundle);
+      setPhase("done");
+      if (!bundle.heroImageUrl) loadImages(bundle);
+      return true;
+    },
+    [loadImages]
+  );
+
+  const pollJobToCompletion = useCallback(
+    async (jobId: string) => {
+      const INITIAL_INTERVAL = 1000;
+      const MAX_INTERVAL = 3000;
+      let interval = INITIAL_INTERVAL;
+
+      while (true) {
+        // Stop polling if user initiated cancellation on the client side.
+        if (cancelledRef.current) return;
+
+        const res = await fetch(`/api/jobs/${jobId}`);
+        if (!res.ok) {
+          throw new Error(`轮询任务失败 (HTTP ${res.status})`);
+        }
+        const { job } = await res.json();
+        if (!job) throw new Error("任务不存在或已被清理");
+
+        // Sync progress events into UI
+        if (Array.isArray(job.events)) {
+          setSearchEvents(job.events);
+        }
+        if (job.status === "searching") setPhase("searching");
+        else if (job.status === "generating") setPhase("generating");
+
+        if (job.status === "done") {
+          const ok = await loadCachedBundle(topic);
+          if (!ok) throw new Error("任务完成但简报内容缺失");
+          return;
+        }
+        if (job.status === "cancelled") {
+          // The job was cancelled (either by this client or another tab).
+          // Silently stop — the UI will have already navigated away.
+          return;
+        }
+        if (job.status === "error") {
+          throw new Error(job.error || "生成任务失败");
+        }
+
+        await new Promise((r) => setTimeout(r, interval));
+        interval = Math.min(MAX_INTERVAL, interval + 500);
+      }
+    },
+    [loadCachedBundle, topic]
+  );
+
+  const startGeneration = useCallback(async () => {
+    if (!topic || hasStarted.current) return;
+    hasStarted.current = true;
+
+    try {
+      // Phase 0: fast path — briefing already cached
+      if (await loadCachedBundle(topic)) return;
+
+      // Phase 1: Enqueue a generation job
+      setPhase("searching");
+      const enqueueRes = await fetch("/api/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ topic }),
+      });
+
+      if (enqueueRes.status === 429) {
+        const body = await enqueueRes.json();
+        throw new Error(body.message || "并发生成任务已达上限");
+      }
+      if (!enqueueRes.ok) {
+        const body = await enqueueRes.text();
+        throw new Error(`无法启动生成任务: ${body.slice(0, 120)}`);
+      }
+      const data = await enqueueRes.json();
+
+      // If cache was populated between Phase 0 and Phase 1 race, handle it
+      if (data.kind === "cached") {
+        if (await loadCachedBundle(topic)) return;
+      }
+
+      if (data.kind !== "job") {
+        throw new Error("未知的任务响应格式");
+      }
+
+      // Remember the job ID so the cancel button can act on it
+      setActiveJobId(data.job.id);
+
+      // Kick off hero image fetch in parallel (only needs topic)
+      fetchHeroImage(topic).then((url) => {
+        if (url) {
+          setBriefing((prev) => (prev ? { ...prev, heroImageUrl: url } : prev));
+        } else {
+          setHeroImageFailed(true);
+        }
+      });
+
+      // Phase 2: poll until done
+      await pollJobToCompletion(data.job.id);
+    } catch (err) {
+      console.error("Generation error:", err);
+      const msg = err instanceof Error ? err.message : String(err);
+      let hint = msg;
+      if (msg.includes("fetch failed") || msg.includes("ETIMEDOUT")) {
+        hint = "网络连接不稳定，请稍后重试";
+      } else if (msg.includes("429") || msg.includes("rate")) {
+        hint = "LLM 服务限流，稍后再试";
+      } else if (msg.includes("401") || msg.includes("403")) {
+        hint = "LLM API 授权失败";
+      }
+      setErrorMsg(hint);
+      setPhase("error");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [topic, loadCachedBundle, pollJobToCompletion]);
+
   useEffect(() => {
     startGeneration();
   }, [startGeneration]);
+
+  const handleCancel = useCallback(async () => {
+    if (!activeJobId || cancelling) return;
+    setCancelling(true);
+    cancelledRef.current = true;
+    try {
+      await fetch(`/api/jobs/${activeJobId}`, { method: "DELETE" });
+    } catch {
+      // ignore — job will also auto-expire on server, and we're navigating away
+    }
+    // Navigate back to homepage with the topic pre-filled so user can edit
+    router.push(`/?topic=${encodeURIComponent(topic)}`);
+  }, [activeJobId, cancelling, router, topic]);
 
   const briefingSummary = briefing
     ? `主题：${briefing.topic}\n一句话速览：${briefing.oneLiner}\n维度：${briefing.dimensions
         ?.map((d: DimensionContent) => `${DIMENSION_META[d.key]?.label}: ${d.summary}`)
         .join("\n")}`
-    : rawText.slice(0, 2000);
+    : "";
 
   if (!topic) {
     return (
@@ -371,10 +273,10 @@ function BriefingContent() {
   return (
     <main className="flex-1 flex flex-col max-w-3xl mx-auto w-full px-4 py-6">
       {/* Header */}
-      <div className="flex items-center gap-3 mb-6">
+      <div className="flex items-start gap-3 mb-6">
         <button
           onClick={() => router.push("/")}
-          className="w-9 h-9 rounded-lg hover:bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+          className="shrink-0 w-9 h-9 rounded-lg hover:bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
           aria-label="返回"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -387,6 +289,36 @@ function BriefingContent() {
             认知简报
           </div>
           <h1 className="text-2xl font-bold break-words leading-tight">{topic}</h1>
+        </div>
+        {/* Top-right action: Cancel while generating, Share when done */}
+        <div className="shrink-0">
+          {phase !== "done" && phase !== "error" && (
+            <button
+              onClick={handleCancel}
+              disabled={cancelling || !activeJobId}
+              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-destructive/40 text-destructive hover:bg-destructive hover:text-destructive-foreground disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-sm"
+              title="取消并回首页修改主题"
+            >
+              {cancelling ? (
+                <>
+                  <span className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin" />
+                  <span>取消中</span>
+                </>
+              ) : (
+                <>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="15" y1="9" x2="9" y2="15" />
+                    <line x1="9" y1="9" x2="15" y2="15" />
+                  </svg>
+                  <span>取消</span>
+                </>
+              )}
+            </button>
+          )}
+          {briefing && phase === "done" && (
+            <ShareButton topic={topic} oneLiner={briefing.oneLiner} />
+          )}
         </div>
       </div>
 
@@ -411,7 +343,6 @@ function BriefingContent() {
                 hasStarted.current = false;
                 setErrorMsg("");
                 setSearchEvents([]);
-                setRawText("");
                 setBriefing(null);
                 setPhase("searching");
                 startGeneration();
@@ -565,18 +496,6 @@ function BriefingContent() {
 
           {/* Dialogue Tips */}
           <DialogueTipsSection tips={briefing.dialogueTips} />
-        </div>
-      )}
-
-      {/* Raw text fallback (only when parse fails gracefully, not hard error) */}
-      {!briefing && phase === "done" && rawText && (
-        <div className="rounded-xl border p-5 mt-4">
-          <p className="text-sm text-muted-foreground mb-3">
-            简报生成完成，但 JSON 格式解析失败。原始内容：
-          </p>
-          <pre className="text-sm text-foreground whitespace-pre-wrap font-mono">
-            {rawText}
-          </pre>
         </div>
       )}
 

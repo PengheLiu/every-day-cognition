@@ -30,6 +30,7 @@ export function ExpertDetailModal({
             englishName: expert.englishName,
             title: expert.title,
             org: expert.org,
+            englishOrg: expert.englishOrg,
             topic,
           }),
         });

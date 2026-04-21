@@ -1,8 +1,8 @@
-# 认知对齐 · Cognitive Alignment
+# 认知学习 · Cognitive Learning
 
 > 几分钟内建立结构化认知框架，让你能和任何领域的人自信对话。
 
-基于**真实大佬观点**的认知对齐 Web 应用：输入任意主题 → 实时搜索该领域真实存在的专家 → 提取他们的公开言论 → 生成 7 维度结构化简报（含专家引用卡片、个人 Google Scholar 链接）。
+基于**真实大佬观点**的认知学习 Web 应用：输入任意主题 → 实时搜索该领域真实存在的专家 → 提取他们的公开言论 → 生成 7 维度结构化简报（含专家引用卡片、个人 Google Scholar 链接）。
 
 ## 核心特性
 
@@ -71,7 +71,58 @@ npm run dev
 
 ## 部署
 
-目前仅在本地运行（依赖 Meituan 内网搜索 API）。海外部署需替换搜索源（Tavily / Serper / 自行实现）。
+### 方式一：一键脚本（裸机 / 任何 Linux 容器内）
+
+```bash
+# 生产模式（会 npm ci + next build + 启动 standalone 服务）
+./scripts/start.sh
+
+# 开发模式（热更新）
+./scripts/start.sh dev
+
+# 自定义端口
+PORT=8080 ./scripts/start.sh
+
+# 绑定特定地址
+HOST=127.0.0.1 PORT=8080 ./scripts/start.sh
+```
+
+要求：Node.js ≥ 20；`web/.env.local` 或 `web/.env` 里填好 API key。
+
+### 方式二：Docker（推荐生产环境）
+
+```bash
+# 构建镜像 + 启动（首次）
+docker compose up -d --build
+
+# 查看日志
+docker compose logs -f
+
+# 停止
+docker compose down
+```
+
+说明：
+- SQLite 数据库自动持久化到宿主机 `./data`
+- 环境变量从 `web/.env.local` 或 `web/.env` 读取
+- 默认 3000 端口；想改用 `HOST_PORT=8080 docker compose up -d`
+- 镜像基于 `node:22-bookworm-slim`，多阶段构建最终镜像约 250MB
+- 非 root 用户运行（`nextjs:1001`），含健康检查
+
+### 方式三：原生 npm 命令
+
+```bash
+cd web
+npm ci
+npm run build
+npm run start
+```
+
+### 注意事项（内网依赖）
+
+当前后端调用 Meituan 内网 Friday 搜索 API（`agi.sankuai.com`）。部署到公网环境前需要：
+- 替换搜索源（Tavily / Serper / 自行实现）
+- 或者在能访问美团内网的机器（跳板机 / VPN）上部署
 
 ## License
 

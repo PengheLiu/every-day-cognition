@@ -8,6 +8,13 @@ const LLM_API_KEY = process.env.LLM_API_KEY!;
 const LLM_BASE_URL = process.env.LLM_API_BASE_URL || "https://openrouter.ai/api/v1";
 const DEFAULT_MODEL = process.env.LLM_MODEL || "anthropic/claude-sonnet-4.5";
 
+/**
+ * Fast/cheap model for structured extraction (JSON from text). Typically 3x
+ * faster than the main model for the same task. Use when output is structured
+ * and quality is bounded by input (not by model "creativity").
+ */
+export const FAST_MODEL = process.env.LLM_FAST_MODEL || "anthropic/claude-haiku-4.5";
+
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;

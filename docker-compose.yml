@@ -1,0 +1,40 @@
+# 认知学习 — 一键启动
+#
+# 首次启动:
+#   1. 确保 web/.env.local 存在且填好了所有 API key（参照 web/.env.example）
+#   2. docker compose up -d --build
+#
+# 后续启动:
+#   docker compose up -d
+#
+# 停止:
+#   docker compose down
+#
+# 查看日志:
+#   docker compose logs -f
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: cognitive-learning:latest
+    container_name: cognitive-learning
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-3000}:3000"
+    env_file:
+      # 优先用 web/.env.local（开发者本地）；如果只有 web/.env 也行
+      - path: ./web/.env.local
+        required: false
+      - path: ./web/.env
+        required: false
+    volumes:
+      # SQLite 数据持久化到宿主机 ./data 目录
+      - ./data:/app/web/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/api/trending',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

@@ -115,59 +115,84 @@ export async function crawlPages(
   }
 }
 
+
+const SCHOLAR_USER_PATTERN =
+  /https?:\/\/scholar\.google\.[a-z.]+\/citations\?[^"'\s<>)]*user=([A-Za-z0-9_-]+)/i;
+
+function stripChinese(s: string): string {
+  return s.replace(/[一-龥]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function extractFirstUserId(results: SearchResultItem[]): string | null {
+  for (const r of results) {
+    const text = `${r.url} ${r.title} ${r.snippet} ${r.content}`;
+    const m = text.match(SCHOLAR_USER_PATTERN);
+    if (m) return m[1];
+  }
+  return null;
+}
+
 /**
- * Find an expert's Google Scholar profile URL by searching Bing restricted to
- * scholar.google.com. Returns the first citations?user= URL found, or null.
+ * Find an expert's Google Scholar profile URL.
  *
- * Bing is essential here because:
- *  - baidu-search-v2 doesn't index scholar.google.com at all (GFW-blocked)
- *  - Bing indexes international sites and supports site: restriction
+ * Runs all candidate tiers (queries) in **parallel** for latency — typical
+ * time drops from ~2-8s (sequential worst case) to ~2-3s (one round trip).
+ *
+ * Priority: prefer T1 (most precise) if it hits, else T2, else T3, else T4.
+ * If multiple tiers return a URL, we pick based on priority.
+ *
+ *   T1: Bing + site:scholar.google.com + `{englishName} {englishOrg}`
+ *   T2: Bing + site:scholar.google.com + `{englishName}`
+ *   T3: Bing + `{englishName} Google Scholar citations` (no site restrict)
+ *   T4: Bing + site:scholar.google.com + `{englishName} {topic}`
  */
 export async function findScholarProfileUrl(
   name: string,
   englishName?: string,
-  org?: string
+  org?: string,
+  englishOrg?: string,
+  topic?: string
 ): Promise<string | null> {
-  // Query prefers English name (Scholar is Latin-indexed)
-  const q = englishName?.trim() || name;
-  const orgHint = org && org !== "未知" ? org.replace(/[\u4e00-\u9fa5]/g, " ").trim() : "";
-  const query = orgHint ? `${q} ${orgHint}` : q;
+  const latinName = englishName?.trim() || stripChinese(name);
+  if (!latinName) return null;
 
-  const results = await fridaySearch(query, {
-    sources: ["bing"],
-    topK: 10,
-    siteRestrictions: ["scholar.google.com"],
-    timeout: 8,
-  });
+  const latinOrg = (englishOrg?.trim() || stripChinese(org || "")).trim();
+  const latinTopic = topic ? stripChinese(topic) : "";
 
-  // Look for a citations?user=XXX URL. The first result is almost always the
-  // intended author's profile when searching with site:scholar.google.com.
-  const pattern = /https?:\/\/scholar\.google\.[a-z.]+\/citations\?[^"'\s<>)]*user=([A-Za-z0-9_-]+)/i;
+  const runTier = async (
+    query: string,
+    opts: { siteRestrict?: boolean; topK?: number } = {}
+  ): Promise<string | null> => {
+    const { siteRestrict = true, topK = 5 } = opts;
+    const results = await fridaySearch(query, {
+      sources: ["bing"],
+      topK,
+      siteRestrictions: siteRestrict ? ["scholar.google.com"] : undefined,
+      timeout: 8,
+    });
+    const userId = extractFirstUserId(results);
+    return userId ? `https://scholar.google.com/citations?user=${userId}&hl=en` : null;
+  };
+
+  // Build the tier list with priority. Skip tiers whose inputs are missing.
+  const tiers: Array<() => Promise<string | null>> = [];
+  if (latinOrg) tiers.push(() => runTier(`${latinName} ${latinOrg}`));
+  tiers.push(() => runTier(latinName));
+  tiers.push(() =>
+    runTier(`${latinName} Google Scholar citations`, {
+      siteRestrict: false,
+      topK: 8,
+    })
+  );
+  if (latinTopic && latinTopic !== latinName) {
+    tiers.push(() => runTier(`${latinName} ${latinTopic}`));
+  }
+
+  // Fire all in parallel, keep results in priority order
+  const results = await Promise.all(tiers.map((t) => t().catch(() => null)));
   for (const r of results) {
-    const text = `${r.url} ${r.title} ${r.snippet} ${r.content}`;
-    const m = text.match(pattern);
-    if (m) {
-      const userId = m[1];
-      return `https://scholar.google.com/citations?user=${userId}&hl=en`;
-    }
+    if (r) return r; // first hit wins (priority-ordered)
   }
-
-  // Fallback: try a broader Bing search without site restriction, in case the
-  // profile URL only appears in a referring page (e.g. Wikipedia).
-  const broader = await fridaySearch(`${q} Google Scholar citations`, {
-    sources: ["bing"],
-    topK: 5,
-    timeout: 8,
-  });
-  for (const r of broader) {
-    const text = `${r.url} ${r.title} ${r.snippet} ${r.content}`;
-    const m = text.match(pattern);
-    if (m) {
-      const userId = m[1];
-      return `https://scholar.google.com/citations?user=${userId}&hl=en`;
-    }
-  }
-
   return null;
 }
 
