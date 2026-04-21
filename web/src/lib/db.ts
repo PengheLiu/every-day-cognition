@@ -55,17 +55,46 @@ declare global {
   var __ca_db: DatabaseSyncType | undefined;
 }
 
-export const db: DatabaseSyncType =
-  global.__ca_db ??
-  (() => {
-    const instance = new DatabaseSync(DB_PATH);
-    instance.exec("PRAGMA journal_mode = WAL");
-    instance.exec("PRAGMA foreign_keys = ON");
-    initSchema(instance);
-    return instance;
-  })();
+/**
+ * Lazy initializer. We MUST NOT open the DB at module-evaluation time —
+ * Next.js `next build` spawns 15 parallel workers that all import route
+ * modules to collect page metadata, and if each worker opens the same
+ * SQLite file concurrently, we hit "database is locked" during the WAL
+ * initialization handshake.
+ *
+ * With lazy init behind a Proxy, `import { db }` is zero-cost; the first
+ * `db.prepare(...)` / `db.exec(...)` etc. call at runtime opens the
+ * connection. Build-time workers never trigger that, so they stay closed.
+ */
+let _dbInstance: DatabaseSyncType | null = null;
 
-if (process.env.NODE_ENV !== "production") global.__ca_db = db;
+function getRealDb(): DatabaseSyncType {
+  if (_dbInstance) return _dbInstance;
+  if (global.__ca_db) {
+    _dbInstance = global.__ca_db;
+    return _dbInstance;
+  }
+  const instance = new DatabaseSync(DB_PATH);
+  instance.exec("PRAGMA journal_mode = WAL");
+  instance.exec("PRAGMA foreign_keys = ON");
+  initSchema(instance);
+  _dbInstance = instance;
+  if (process.env.NODE_ENV !== "production") global.__ca_db = instance;
+  return instance;
+}
+
+/**
+ * Exposed as if it were a real DatabaseSync — all property accesses are
+ * delegated to the underlying connection (opened on first access).
+ */
+export const db = new Proxy({} as DatabaseSyncType, {
+  get(_target, prop: string | symbol) {
+    const real = getRealDb() as unknown as Record<string | symbol, unknown>;
+    const value = real[prop];
+    // Bind methods to the real instance so `this` is correct
+    return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(real) : value;
+  },
+});
 
 function initSchema(d: DatabaseSyncType) {
   d.exec(`
