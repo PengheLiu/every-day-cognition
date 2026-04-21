@@ -40,8 +40,60 @@ log()  { printf "\033[1;36m[start.sh]\033[0m %s\n" "$*"; }
 warn() { printf "\033[1;33m[start.sh]\033[0m %s\n" "$*" >&2; }
 err()  { printf "\033[1;31m[start.sh]\033[0m %s\n" "$*" >&2; }
 
-# ---------- checks ----------
-command -v node >/dev/null 2>&1 || { err "Node.js 未安装 — 请先装 Node.js ≥ 20"; exit 1; }
+# ---------- Node.js resolution ----------
+# Requirement: Node ≥ 20 (Next.js 16 minimum). On modern distros we use the
+# system Node. On old systems (CentOS 7 / RHEL 7 with GLIBC 2.17), the
+# vanilla Node binary fails with "GLIBC_2.28 not found"; we auto-download
+# the official **glibc-217 unofficial build** (statically linked) into
+# ~/.local/share/cl-node and add it to PATH.
+NODE_VER="v22.12.0"
+NODE_CACHE="$HOME/.local/share/cl-node"
+
+needs_legacy_node() {
+  # Returns 0 if we need the glibc-217 build (system node missing or too old
+  # or hits GLIBC errors).
+  if ! command -v node >/dev/null 2>&1; then return 0; fi
+  local major
+  major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+  if [[ "$major" -lt 20 ]]; then return 0; fi
+  # Probe: if running `node -v` spits GLIBC error, we need legacy
+  if ! node -v >/dev/null 2>&1; then return 0; fi
+  return 1
+}
+
+install_legacy_node() {
+  local url="https://unofficial-builds.nodejs.org/download/release/${NODE_VER}/node-${NODE_VER}-linux-x64-glibc-217.tar.gz"
+  local dest="$NODE_CACHE/node-${NODE_VER}-linux-x64-glibc-217"
+
+  if [[ -x "$dest/bin/node" ]]; then
+    log "复用已下载的 glibc-217 Node: $dest"
+  else
+    warn "检测到老旧 GLIBC 环境（CentOS 7 / RHEL 7），下载兼容 Node ${NODE_VER}..."
+    mkdir -p "$NODE_CACHE"
+    local tarball="$NODE_CACHE/node.tar.gz"
+    if command -v curl >/dev/null 2>&1; then
+      curl -fsSL "$url" -o "$tarball" || { err "下载 Node 失败: $url"; exit 1; }
+    elif command -v wget >/dev/null 2>&1; then
+      wget -q "$url" -O "$tarball" || { err "下载 Node 失败: $url"; exit 1; }
+    else
+      err "需要 curl 或 wget 来下载 Node"; exit 1
+    fi
+    tar -xzf "$tarball" -C "$NODE_CACHE"
+    rm -f "$tarball"
+  fi
+  export PATH="$dest/bin:$PATH"
+  log "已切换到 glibc-217 兼容 Node: $(node -v)"
+}
+
+if needs_legacy_node; then
+  install_legacy_node
+fi
+
+# Final check
+if ! node -v >/dev/null 2>&1; then
+  err "Node.js 不可用 — 请手动安装 Node ≥ 20 并重试"
+  exit 1
+fi
 NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
 if [[ "$NODE_MAJOR" -lt 20 ]]; then
   err "Node.js 版本过低 ($NODE_MAJOR.x)，需要 ≥ 20"
@@ -66,6 +118,16 @@ if [[ ! -f ".env.local" && ! -f ".env" ]]; then
 fi
 
 # ---------- install deps ----------
+# On old distros (CentOS 7), better-sqlite3's prebuilt binary may not match
+# the glibc version → it'll try to compile from source, which needs a modern
+# C++ toolchain. Warn early so the failure mode is obvious.
+if [[ -f "/etc/os-release" ]] && grep -qE 'CentOS Linux 7|Red Hat Enterprise Linux (Server|Client)? *(release)? *7' /etc/os-release 2>/dev/null; then
+  if ! command -v g++ >/dev/null 2>&1 || ! g++ -dumpversion 2>/dev/null | awk -F. '{exit ($1>=8) ? 0 : 1}'; then
+    warn "CentOS 7 + 老旧 g++ 可能无法编译 better-sqlite3 native 模块。"
+    warn "  若安装失败，请运行: sudo yum install -y centos-release-scl && sudo yum install -y devtoolset-11 && scl enable devtoolset-11 bash"
+  fi
+fi
+
 if [[ ! -d "node_modules" || "package.json" -nt "node_modules/.package-lock.json" ]]; then
   log "安装依赖 (npm ci)..."
   if [[ -f "package-lock.json" ]]; then
