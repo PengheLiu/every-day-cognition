@@ -8,7 +8,7 @@
 #   docker build -t cognitive-learning .
 #
 # 运行（data/ 挂载为持久卷，env 可通过 --env-file 传入）:
-#   docker run -d -p 3000:3000 \
+#   docker run -d -p 8000:8000 \
 #     --env-file web/.env.local \
 #     -v $(pwd)/data:/app/data \
 #     --name cl cognitive-learning
@@ -55,12 +55,12 @@ USER nextjs
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
-ENV PORT=3000
+ENV PORT=8000
 ENV HOSTNAME=0.0.0.0
 # node:sqlite experimental flag (Node 22.x)
 ENV NODE_OPTIONS="--experimental-sqlite --no-warnings=ExperimentalWarning"
 
-EXPOSE 3000
+EXPOSE 8000
 
 ENTRYPOINT ["/usr/bin/dumb-init", "--"]
 CMD ["node", "web/server.js"]

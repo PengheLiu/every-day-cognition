@@ -54,7 +54,7 @@ cp .env.example .env.local
 
 npm install
 npm run dev
-# 打开 http://localhost:3000
+# 打开 http://localhost:8000
 ```
 
 默认开发环境下：
@@ -105,7 +105,7 @@ docker compose down
 说明：
 - SQLite 数据库自动持久化到宿主机 `./data`
 - 环境变量从 `web/.env.local` 或 `web/.env` 读取
-- 默认 3000 端口；想改用 `HOST_PORT=8080 docker compose up -d`
+- 默认 8000 端口；想换用 `HOST_PORT=9000 docker compose up -d`
 - 镜像基于 `node:22-bookworm-slim`，多阶段构建最终镜像约 250MB
 - 非 root 用户运行（`nextjs:1001`），含健康检查
 

@@ -21,7 +21,7 @@ WEB_DIR="$REPO_ROOT/web"
 
 # ---------- args / env ----------
 MODE="${1:-${MODE:-production}}"
-PORT="${PORT:-3000}"
+PORT="${PORT:-8000}"
 # NOTE: don't use $HOSTNAME — Linux/macOS set it to the machine's hostname,
 # which fails getaddrinfo. Use $HOST (our var) and export HOSTNAME explicitly.
 HOST="${HOST:-0.0.0.0}"

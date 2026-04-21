@@ -22,7 +22,7 @@ services:
     container_name: cognitive-learning
     restart: unless-stopped
     ports:
-      - "${HOST_PORT:-3000}:3000"
+      - "${HOST_PORT:-8000}:8000"
     env_file:
       # 优先用 web/.env.local（开发者本地）；如果只有 web/.env 也行
       - path: ./web/.env.local
@@ -33,7 +33,7 @@ services:
       # SQLite 数据持久化到宿主机 ./data 目录
       - ./data:/app/web/data
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/api/trending',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:8000/api/trending',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 3
