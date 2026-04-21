@@ -149,6 +149,39 @@ fi
 # ---------- make sure data dir exists (SQLite needs it) ----------
 mkdir -p data
 
+# ---------- load env files into the current process ----------
+# Next.js standalone mode runs `node server.js` directly and does NOT auto-load
+# .env.local (that behavior only exists in `next dev` / `next build`). Source
+# them here so every mode — dev, prod, standalone — sees the same env.
+load_env_file() {
+  local file="$1"
+  [[ -f "$file" ]] || return 0
+  log "加载环境变量: $file"
+  set -a
+  # shellcheck disable=SC1090
+  source "$file"
+  set +a
+}
+# Order follows Next.js precedence (later overrides earlier):
+#   .env  <  .env.local  <  .env.production / .env.development  <  .env.*.local
+load_env_file ".env"
+load_env_file ".env.local"
+if [[ "$NODE_ENV" == "production" ]]; then
+  load_env_file ".env.production"
+  load_env_file ".env.production.local"
+else
+  load_env_file ".env.development"
+  load_env_file ".env.development.local"
+fi
+
+# Re-export cookie/proxy settings that may have been set by env files
+if [[ -n "${HTTP_PROXY:-}${HTTPS_PROXY:-}${http_proxy:-}${https_proxy:-}" ]]; then
+  if [[ -z "${NO_PROXY:-}${no_proxy:-}" ]]; then
+    export NO_PROXY="localhost,127.0.0.1,.sankuai.com,.meituan.com"
+    export no_proxy="$NO_PROXY"
+  fi
+fi
+
 # ---------- start ----------
 if [[ "$MODE" == "dev" ]]; then
   log "🚀 启动开发服务器 (next dev) on http://$HOST:$PORT"
