@@ -124,10 +124,14 @@ fi
 # compile — any Linux distro works without devtoolset or glibc upgrades.)
 if [[ ! -d "node_modules" || "package.json" -nt "node_modules/.package-lock.json" ]]; then
   log "安装依赖 (npm ci)..."
+  # IMPORTANT: must include devDependencies here — next build needs
+  # @tailwindcss/postcss, typescript, etc. which live in devDependencies.
+  # Our script sets NODE_ENV=production earlier, which would otherwise cause
+  # npm ci to skip devDependencies.
   if [[ -f "package-lock.json" ]]; then
-    npm ci --no-audit --no-fund
+    npm ci --include=dev --no-audit --no-fund
   else
-    npm install --no-audit --no-fund
+    npm install --include=dev --no-audit --no-fund
   fi
 else
   log "依赖已最新，跳过 npm install"

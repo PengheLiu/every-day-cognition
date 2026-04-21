@@ -18,7 +18,8 @@
 FROM node:22-bookworm-slim AS deps
 WORKDIR /app/web
 COPY web/package.json web/package-lock.json* ./
-RUN npm ci --no-audit --no-fund
+# Include devDependencies — next build needs @tailwindcss/postcss, typescript, etc.
+RUN npm ci --include=dev --no-audit --no-fund
 
 # ---------- Stage 2: builder ----------
 FROM node:22-bookworm-slim AS builder
