@@ -1,19 +1,13 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { TopBar } from "@/components/TopBar";
 import { InstallPrompt } from "@/components/InstallPrompt";
 import { JobDock } from "@/components/JobDock";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+// NOTE: intentionally NOT using next/font/google — it downloads fonts from
+// fonts.gstatic.com at build time, which fails in air-gapped / offline
+// container environments. We rely on system font stacks instead (Tailwind
+// defaults + globals.css), which look nearly identical on modern platforms.
 
 export const metadata: Metadata = {
   title: "认知学习 - Cognitive Learning",
@@ -57,7 +51,7 @@ export default function RootLayout({
   return (
     <html
       lang="zh-CN"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className="h-full antialiased"
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col" suppressHydrationWarning>
