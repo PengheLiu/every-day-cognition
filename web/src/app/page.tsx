@@ -160,7 +160,7 @@ function HomeContent() {
             基于真实大佬观点的认知学习
           </div>
           <h1 className="text-5xl font-bold tracking-tight">
-            认知<span className="text-primary">学习</span>
+            每天学<span className="text-primary">一个认知</span>
           </h1>
           <p className="text-lg text-muted-foreground max-w-md mx-auto">
             几分钟内建立结构化认知框架，让你能和任何领域的人自信对话
