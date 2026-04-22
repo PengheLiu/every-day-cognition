@@ -408,7 +408,7 @@ export interface GenerationJob {
 
 const ACTIVE_STATUSES: JobStatus[] = ["pending", "searching", "generating"];
 const STUCK_TIMEOUT_MS = 5 * 60 * 1000; // mark as error if no updates for 5 min
-const MAX_ACTIVE_PER_USER = 5;
+const MAX_ACTIVE_PER_USER = 1;
 
 /** Soft-expire jobs that haven't been updated in a while (server restart, crash, etc.) */
 function expireStuckJobs(userId: string | null) {

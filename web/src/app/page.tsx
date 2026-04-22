@@ -45,6 +45,12 @@ interface HistoryItem {
   topic: string;
   created_at: number;
 }
+interface ActiveJob {
+  id: string;
+  topic: string;
+  status: string;
+  progress_message: string | null;
+}
 
 function HomeContent() {
   const searchParams = useSearchParams();
@@ -54,6 +60,8 @@ function HomeContent() {
   const [trending, setTrending] = useState<TrendingItem[]>([]);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [loggedIn, setLoggedIn] = useState<boolean | undefined>(undefined);
+  const [activeJob, setActiveJob] = useState<ActiveJob | null>(null);
+  const [blockNotice, setBlockNotice] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
@@ -88,9 +96,51 @@ function HomeContent() {
     return () => clearTimeout(t);
   }, [initialTopic]);
 
+  // Track the user's currently-running job (server cap is 1). While active,
+  // we disable the input + show a banner that links back to the in-progress
+  // briefing. Polled every 4s so the UI clears within a few seconds of
+  // completion / cancellation.
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const r = await fetch("/api/jobs?active=true&limit=1");
+        if (!r.ok) return;
+        const d = await r.json();
+        if (cancelled) return;
+        const job: ActiveJob | undefined = d.jobs?.[0];
+        setActiveJob(job ?? null);
+        // If the active topic matches what the user is typing, clear any old
+        // "blocked" notice — they're effectively just continuing that job.
+        setBlockNotice((prev) =>
+          job && job.topic === topic.trim() ? "" : prev
+        );
+      } catch {
+        // ignore — will retry on next tick
+      }
+    };
+    poll();
+    const id = setInterval(poll, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+    // intentionally re-poll when topic changes so the "matches active" logic
+    // re-evaluates without waiting for the next 4s tick
+  }, [topic]);
+
   const handleSubmit = (value: string) => {
     const trimmed = value.trim();
     if (!trimmed) return;
+
+    // Server cap is 1 active job per user. If a different topic is already
+    // running, refuse — surface the active topic so the user can resume it.
+    if (activeJob && activeJob.topic !== trimmed) {
+      setBlockNotice(
+        `已有「${activeJob.topic}」在生成中，请等待完成后再开始新主题`
+      );
+      return;
+    }
     router.push(`/briefing?topic=${encodeURIComponent(trimmed)}`);
   };
 
@@ -117,6 +167,31 @@ function HomeContent() {
           </p>
         </div>
 
+        {/* Active-job banner — shown when user has a job currently running.
+            Links back to the in-progress briefing so they can pick up where
+            they left off without losing the work. */}
+        {activeJob && (
+          <Link
+            href={`/briefing?topic=${encodeURIComponent(activeJob.topic)}`}
+            className="block rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 hover:bg-primary/10 transition-colors group"
+          >
+            <div className="flex items-center gap-3">
+              <span className="w-2 h-2 rounded-full bg-primary animate-pulse shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium truncate">
+                  正在生成「{activeJob.topic}」
+                </div>
+                <div className="text-[11px] text-muted-foreground truncate">
+                  {activeJob.progress_message || "处理中..."}
+                </div>
+              </div>
+              <span className="text-xs text-primary group-hover:translate-x-0.5 transition-transform shrink-0">
+                继续查看 →
+              </span>
+            </div>
+          </Link>
+        )}
+
         {/* Search Input */}
         <div className="relative group">
           <div className="absolute inset-0 bg-gradient-to-r from-primary/20 to-accent/20 rounded-xl blur-xl opacity-0 group-hover:opacity-50 group-focus-within:opacity-50 transition-opacity" />
@@ -124,17 +199,25 @@ function HomeContent() {
             <Input
               ref={inputRef}
               type="text"
-              placeholder="你想了解什么领域？例如：微服务架构、量子计算..."
-              className="h-16 text-lg px-6 pr-16 rounded-xl shadow-sm border-2 focus:border-primary transition-all bg-white"
+              placeholder={
+                activeJob
+                  ? `等「${activeJob.topic}」生成完才能开新主题`
+                  : "你想了解什么领域？例如：微服务架构、量子计算..."
+              }
+              className="h-16 text-lg px-6 pr-16 rounded-xl shadow-sm border-2 focus:border-primary transition-all bg-white disabled:bg-muted/40 disabled:cursor-not-allowed"
               value={topic}
-              onChange={(e) => setTopic(e.target.value)}
+              onChange={(e) => {
+                setTopic(e.target.value);
+                if (blockNotice) setBlockNotice("");
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") handleSubmit(topic);
               }}
+              disabled={!!activeJob}
             />
             <button
               onClick={() => handleSubmit(topic)}
-              disabled={!topic.trim()}
+              disabled={!topic.trim() || !!activeJob}
               className="absolute right-3 top-1/2 -translate-y-1/2 w-11 h-11 flex items-center justify-center rounded-lg bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
               aria-label="开始学习这个领域"
             >
@@ -144,6 +227,11 @@ function HomeContent() {
               </svg>
             </button>
           </div>
+          {blockNotice && (
+            <div className="mt-2 text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              {blockNotice}
+            </div>
+          )}
         </div>
 
         {/* Personal history (logged in users) */}
@@ -160,10 +248,11 @@ function HomeContent() {
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {history.slice(0, 6).map((item) => (
-                <Link
+                <button
                   key={`${item.topic}-${item.created_at}`}
-                  href={`/briefing?topic=${encodeURIComponent(item.topic)}`}
-                  className="flex items-center gap-2.5 p-3 rounded-lg border bg-white hover:border-primary hover:shadow-sm transition-all group"
+                  onClick={() => handleSubmit(item.topic)}
+                  className="flex items-center gap-2.5 p-3 rounded-lg border bg-white hover:border-primary hover:shadow-sm transition-all group text-left disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={!!activeJob && activeJob.topic !== item.topic}
                 >
                   <span className="text-base">{pickEmoji(item.topic)}</span>
                   <div className="flex-1 min-w-0">
@@ -174,7 +263,7 @@ function HomeContent() {
                       {formatRelative(item.created_at)}
                     </div>
                   </div>
-                </Link>
+                </button>
               ))}
             </div>
           </section>
@@ -207,24 +296,28 @@ function HomeContent() {
             </span>
           </div>
           <div className="flex flex-wrap gap-2.5">
-            {trendingTopics.map((t, i) => (
-              <button
-                key={t.label}
-                onClick={() => handleSubmit(t.label)}
-                className="group/tag inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-white border border-border hover:border-primary hover:text-primary hover:shadow-sm transition-all text-sm font-medium cursor-pointer"
-              >
-                <span className="text-base">{t.emoji}</span>
-                <span>{t.label}</span>
-                {t.count > 0 && (
-                  <span className="text-[10px] text-muted-foreground ml-0.5">
-                    · {t.count}
-                  </span>
-                )}
-                {i === 0 && trending.length > 0 && (
-                  <span className="text-[10px] text-accent">#1</span>
-                )}
-              </button>
-            ))}
+            {trendingTopics.map((t, i) => {
+              const blocked = !!activeJob && activeJob.topic !== t.label;
+              return (
+                <button
+                  key={t.label}
+                  onClick={() => handleSubmit(t.label)}
+                  disabled={blocked}
+                  className="group/tag inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-white border border-border hover:border-primary hover:text-primary hover:shadow-sm transition-all text-sm font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-border disabled:hover:text-foreground disabled:hover:shadow-none"
+                >
+                  <span className="text-base">{t.emoji}</span>
+                  <span>{t.label}</span>
+                  {t.count > 0 && (
+                    <span className="text-[10px] text-muted-foreground ml-0.5">
+                      · {t.count}
+                    </span>
+                  )}
+                  {i === 0 && trending.length > 0 && (
+                    <span className="text-[10px] text-accent">#1</span>
+                  )}
+                </button>
+              );
+            })}
           </div>
         </section>
 
