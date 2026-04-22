@@ -188,9 +188,35 @@ if [[ "$MODE" == "dev" ]]; then
   exec npx next dev -H "$HOST" -p "$PORT"
 fi
 
-# Production: build if needed, then start
-if [[ ! -f ".next/BUILD_ID" || "src" -nt ".next/BUILD_ID" ]]; then
+# Production: build if needed, then start.
+# NOTE: the old `src -nt .next/BUILD_ID` check was broken — POSIX directory
+# mtime only updates on direct-entry add/remove, so a git pull that modifies
+# src/lib/foo.ts does NOT bump src/'s mtime, the build was silently skipped,
+# and the standalone server kept running stale compiled code. We now walk
+# the tree with find -newer so any modified file anywhere under src/
+# (or key config files) triggers a rebuild. Set REBUILD=1 to force.
+NEEDS_BUILD=0
+if [[ ! -f ".next/BUILD_ID" ]]; then
+  NEEDS_BUILD=1
+elif [[ "${REBUILD:-0}" == "1" ]]; then
+  NEEDS_BUILD=1
+  log "REBUILD=1 — 强制重新构建"
+else
+  # If any watched file is newer than BUILD_ID → rebuild. `-print -quit` stops
+  # at the first match so this is cheap even on big trees.
+  newer=$(find src package.json package-lock.json next.config.ts tsconfig.json \
+            -type f -newer ".next/BUILD_ID" -print -quit 2>/dev/null || true)
+  if [[ -n "$newer" ]]; then
+    NEEDS_BUILD=1
+    log "检测到源文件变更: $newer …"
+  fi
+fi
+
+if [[ "$NEEDS_BUILD" == "1" ]]; then
   log "构建生产产物 (next build)..."
+  # Nuke the stale standalone dir so we don't boot last build's server.js if
+  # the new build fails partway through.
+  rm -rf .next/standalone
   npx next build
 else
   log "构建产物已最新，跳过 next build"
@@ -198,14 +224,12 @@ fi
 
 # Prefer standalone server if present (smaller footprint, no need for next CLI)
 if [[ -f ".next/standalone/server.js" ]]; then
-  # Copy public/ and .next/static into standalone (required for asset serving)
-  if [[ ! -d ".next/standalone/public" ]]; then
-    cp -r public .next/standalone/
-  fi
-  if [[ ! -d ".next/standalone/.next/static" ]]; then
-    mkdir -p .next/standalone/.next
-    cp -r .next/static .next/standalone/.next/
-  fi
+  # Copy public/ and .next/static into standalone (required for asset serving).
+  # Remove-and-recopy so rebuilds don't leave stale static chunks around.
+  rm -rf .next/standalone/public .next/standalone/.next/static
+  cp -r public .next/standalone/
+  mkdir -p .next/standalone/.next
+  cp -r .next/static .next/standalone/.next/
   log "🚀 启动 standalone 服务 on http://$HOST:$PORT"
   cd .next/standalone
   exec node server.js
