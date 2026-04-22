@@ -51,7 +51,14 @@ export async function fetchExpertDetail(
   ]);
 
   if (searchResults.length === 0) {
-    const emptyDetail: ExpertDetail = {
+    // IMPORTANT: do NOT cache this path. Zero search results for a verified
+    // expert (they passed Phase B, i.e. at least one Friday query already
+    // matched them with topic context) almost always means the search
+    // backend transiently failed / rate-limited — `fridaySearch` swallows
+    // errors and returns []. Caching would pin a 1h "未搜索到相关公开信息"
+    // screen even though the real cause is backpressure that cleared in
+    // seconds. Let the next caller retry.
+    return {
       name,
       englishName,
       currentTitle: `${title}${org && org !== "未知" ? ", " + org : ""}`,
@@ -64,9 +71,6 @@ export async function fetchExpertDetail(
       disambiguation: "未搜索到相关公开信息",
       scholarProfileUrl: scholarProfileUrl || undefined,
     };
-    // Short TTL so a retry can catch freshly-indexed content without hammering.
-    setCachedExpert(name, topic, emptyDetail, 60 * 60 * 1000);
-    return emptyDetail;
   }
 
   const extractionPrompt = buildExpertDetailPrompt(
@@ -84,6 +88,7 @@ export async function fetchExpertDetail(
   );
 
   let parsed: Partial<ExpertDetail> = {};
+  let llmCallFailed = false;
   try {
     const resp = await chatCompletion(
       [{ role: "user", content: extractionPrompt }],
@@ -96,6 +101,7 @@ export async function fetchExpertDetail(
     }
   } catch (err) {
     console.error("[expert-detail] LLM call failed:", err);
+    llmCallFailed = true;
   }
 
   const detail: ExpertDetail = {
@@ -114,9 +120,16 @@ export async function fetchExpertDetail(
     scholarProfileUrl: scholarProfileUrl || undefined,
   };
 
-  // Full hit → 7d. Partial/disambiguation → 1h retry window.
-  const isFullHit = !!(detail.biography || detail.currentStatus);
-  setCachedExpert(name, topic, detail, isFullHit ? undefined : 60 * 60 * 1000);
+  // Caching policy:
+  //   - LLM call itself failed (network/timeout/rate-limit) → DON'T cache.
+  //     Next call gets a fresh attempt.
+  //   - Full hit (bio or currentStatus populated) → 7d.
+  //   - LLM returned structured output but couldn't match the target (true
+  //     disambiguation, or extracted text is empty) → 1h retry window.
+  if (!llmCallFailed) {
+    const isFullHit = !!(detail.biography || detail.currentStatus);
+    setCachedExpert(name, topic, detail, isFullHit ? undefined : 60 * 60 * 1000);
+  }
 
   return detail;
 }
@@ -134,7 +147,7 @@ export async function fetchExpertDetail(
  */
 export async function prewarmExpertDetails(
   experts: FetchExpertDetailInput[],
-  concurrency = 4
+  concurrency = 2
 ): Promise<void> {
   if (experts.length === 0) return;
 
