@@ -18,8 +18,26 @@ import { chatCompletion, FAST_MODEL } from "./openrouter";
 import { multiSearch, findScholarProfileUrl } from "./search";
 import { buildExpertDetailQueries, buildExpertDetailPrompt } from "./prompts";
 import { parseResilientJSON } from "./json-repair";
-import { getCachedExpert, setCachedExpert } from "./db";
+import { getCachedExpert, setCachedExpert, normalizeTopic } from "./db";
 import type { ExpertDetail } from "./types";
+
+/**
+ * Per-process in-flight dedup map.
+ *
+ * Why: prewarm fires N expert fetches in parallel during briefing generation.
+ * If the user clicks an expert WHILE its prewarm fetch is still running, the
+ * naive code starts a duplicate fetch — wasting Friday/LLM quota and racing
+ * the cache write. With this map, the user-click path notices an in-flight
+ * Promise for the same (name, topic) and just awaits it. So:
+ *
+ *   - prewarm finishes first → click hits cache (fastest)
+ *   - prewarm in progress → click awaits same promise (no extra cost)
+ *   - prewarm hasn't started this expert yet → click fires its own fetch
+ *     (and prewarm's later attempt will dedup against IT)
+ *
+ * Keyed identically to the SQLite cache row so the two layers agree.
+ */
+const inFlight = new Map<string, Promise<ExpertDetail>>();
 
 export interface FetchExpertDetailInput {
   name: string;
@@ -54,12 +72,31 @@ export async function fetchExpertDetail(
   input: FetchExpertDetailInput,
   options: FetchExpertDetailOptions = {}
 ): Promise<ExpertDetail> {
+  // Cache check (full hits 7d, empty/disambiguation 1h)
+  const cached = getCachedExpert(input.name, input.topic) as ExpertDetail | null;
+  if (cached) return cached;
+
+  // In-flight dedup: if prewarm (or another tab / another user hitting the
+  // same process) is already fetching this expert, await THEIR promise.
+  const dedupKey = `${input.name.trim()}::${normalizeTopic(input.topic)}`;
+  const existing = inFlight.get(dedupKey);
+  if (existing) return existing;
+
+  const work = doFetchExpertDetail(input, options);
+  inFlight.set(dedupKey, work);
+  try {
+    return await work;
+  } finally {
+    inFlight.delete(dedupKey);
+  }
+}
+
+async function doFetchExpertDetail(
+  input: FetchExpertDetailInput,
+  options: FetchExpertDetailOptions
+): Promise<ExpertDetail> {
   const { name, englishName, title, org, englishOrg, topic } = input;
   const friday = options.gentle ? { topK: 5, concurrency: 2 } : { topK: 5 };
-
-  // Cache check (full hits 7d, empty/disambiguation 1h)
-  const cached = getCachedExpert(name, topic) as ExpertDetail | null;
-  if (cached) return cached;
 
   // Run expert detail search and Scholar profile lookup in parallel
   const [searchResults, scholarProfileUrl] = await Promise.all([
@@ -164,7 +201,7 @@ export async function fetchExpertDetail(
  */
 export async function prewarmExpertDetails(
   experts: FetchExpertDetailInput[],
-  concurrency = 3
+  concurrency = 5
 ): Promise<void> {
   if (experts.length === 0) return;
 

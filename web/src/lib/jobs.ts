@@ -370,15 +370,17 @@ async function runSearchPhase(
 
   // Prewarm expert detail pages in the background. Fires here (end of Phase B)
   // so it runs concurrently with Phase C (quote extraction) and Phase D
-  // (briefing generation) — by the time the user sees the briefing and clicks
-  // an expert, expert_cache is already populated and the drawer opens instantly.
+  // (briefing generation) — by the time the user clicks an expert, expert_cache
+  // is already populated and the drawer opens instantly.
   //
-  // Burst control: prewarm uses { gentle: true } which caps each task's Friday
-  // calls to 2-in-flight (instead of firing all 5 in parallel). Combined with
-  // concurrency=3 here, the search backend sees max ~6 parallel Friday from
-  // prewarm — small enough to coexist with Phase C (~12 Haiku, occasional
-  // Friday for orphan experts) without triggering rate limits that previously
-  // cached poisoned "未搜索到" entries for every expert at once.
+  // With ~20 verified experts and per-task time ~10s (gentle mode adds latency),
+  // we need higher concurrency to finish before the user starts clicking.
+  // concurrency=5 + gentle (each task caps Friday to 2 in-flight) gives:
+  //   - Friday peak from prewarm: 5 × 2 = 10 parallel
+  //   - 20 experts / 5 = 4 batches × 10s = ~40s total
+  // The in-flight dedup in fetchExpertDetail also covers the "user clicks
+  // before prewarm finishes that expert" case — the click awaits the
+  // prewarm's promise instead of firing a duplicate fetch.
   //
   // Fire-and-forget — a failure must not affect the briefing itself.
   prewarmExpertDetails(
@@ -390,7 +392,7 @@ async function runSearchPhase(
       englishOrg: e.englishOrg,
       topic,
     })),
-    3
+    5
   ).catch((err) => {
     console.warn(`[job ${jobId}] expert prewarm batch failed:`, err);
   });
