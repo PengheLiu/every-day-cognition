@@ -30,15 +30,32 @@ export interface FetchExpertDetailInput {
   topic: string;
 }
 
+export interface FetchExpertDetailOptions {
+  /**
+   * "Gentle" mode caps the in-flight Friday calls per task to 2 (instead of
+   * firing all 5-6 detail queries in parallel). Use this when fetchExpertDetail
+   * is being driven by a batch — e.g. prewarming N experts at once during
+   * briefing generation. Without this, prewarm bursts ~20+ Friday requests
+   * per second, the backend rate-limits, and we end up caching empty results
+   * for every expert simultaneously.
+   *
+   * On-demand calls (a user clicks a single expert) leave this off so latency
+   * stays at one round trip.
+   */
+  gentle?: boolean;
+}
+
 /**
  * Fetch (or retrieve from cache) the structured detail for one expert.
  * Never throws — returns a best-effort ExpertDetail with disambiguation
  * on miss.
  */
 export async function fetchExpertDetail(
-  input: FetchExpertDetailInput
+  input: FetchExpertDetailInput,
+  options: FetchExpertDetailOptions = {}
 ): Promise<ExpertDetail> {
   const { name, englishName, title, org, englishOrg, topic } = input;
+  const friday = options.gentle ? { topK: 5, concurrency: 2 } : { topK: 5 };
 
   // Cache check (full hits 7d, empty/disambiguation 1h)
   const cached = getCachedExpert(name, topic) as ExpertDetail | null;
@@ -46,7 +63,7 @@ export async function fetchExpertDetail(
 
   // Run expert detail search and Scholar profile lookup in parallel
   const [searchResults, scholarProfileUrl] = await Promise.all([
-    multiSearch(buildExpertDetailQueries(name, englishName, org, topic), { topK: 5 }),
+    multiSearch(buildExpertDetailQueries(name, englishName, org, topic), friday),
     findScholarProfileUrl(name, englishName, org, englishOrg, topic).catch(() => null),
   ]);
 
@@ -147,7 +164,7 @@ export async function fetchExpertDetail(
  */
 export async function prewarmExpertDetails(
   experts: FetchExpertDetailInput[],
-  concurrency = 2
+  concurrency = 3
 ): Promise<void> {
   if (experts.length === 0) return;
 
@@ -160,7 +177,7 @@ export async function prewarmExpertDetails(
           const task = queue.shift();
           if (!task) break;
           try {
-            await fetchExpertDetail(task);
+            await fetchExpertDetail(task, { gentle: true });
           } catch (err) {
             // Prewarm is best-effort — log and move on.
             console.warn(

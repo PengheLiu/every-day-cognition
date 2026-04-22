@@ -272,20 +272,41 @@ export async function findScholarProfileUrl(
 }
 
 /**
- * Run multiple search queries in parallel and deduplicate results by URL.
+ * Run multiple search queries and deduplicate results by URL.
+ *
+ * `concurrency` caps how many fridaySearch calls are in flight at once.
+ * Default = `queries.length` (all parallel — original behavior, fastest).
+ * Pass a small value (e.g. 2) when this is being called as part of a
+ * background batch (prewarm) that would otherwise burst the search backend
+ * into rate-limiting and poison everyone's results with empty arrays.
  */
 export async function multiSearch(
   queries: string[],
-  options: { topK?: number } = {}
+  options: { topK?: number; concurrency?: number } = {}
 ): Promise<SearchResultItem[]> {
-  const results = await Promise.all(
-    queries.map((q) => fridaySearch(q, { topK: options.topK ?? 5 }))
-  );
+  const topK = options.topK ?? 5;
+  const limit = Math.max(1, Math.min(options.concurrency ?? queries.length, queries.length));
+
+  const queue = [...queries];
+  const batches: SearchResultItem[][] = [];
+
+  const workers: Promise<void>[] = [];
+  for (let i = 0; i < limit; i++) {
+    workers.push(
+      (async () => {
+        while (queue.length > 0) {
+          const q = queue.shift();
+          if (!q) break;
+          batches.push(await fridaySearch(q, { topK }));
+        }
+      })()
+    );
+  }
+  await Promise.all(workers);
 
   const seen = new Set<string>();
   const merged: SearchResultItem[] = [];
-
-  for (const batch of results) {
+  for (const batch of batches) {
     for (const item of batch) {
       if (!seen.has(item.url)) {
         seen.add(item.url);
@@ -293,6 +314,5 @@ export async function multiSearch(
       }
     }
   }
-
   return merged;
 }

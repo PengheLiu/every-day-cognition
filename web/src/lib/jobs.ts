@@ -186,27 +186,6 @@ async function runJobInBackground(jobId: string): Promise<void> {
       return;
     }
 
-    // Prewarm expert detail pages in the background, starting AFTER the
-    // search phase (Phase A/B/C) has finished hammering Friday. Phase D
-    // is LLM-only (Sonnet) so prewarm's Haiku + Friday calls don't fight
-    // it on model throughput, and concurrency stays at 2 so we don't burst
-    // the search backend into rate-limiting (which would cache poisoned
-    // "未搜索到" entries for every expert at once). Fire-and-forget —
-    // a failure must not affect the briefing itself.
-    prewarmExpertDetails(
-      experts.map((e) => ({
-        name: e.name,
-        englishName: e.englishName,
-        title: e.title,
-        org: e.org,
-        englishOrg: e.englishOrg,
-        topic,
-      })),
-      2
-    ).catch((err) => {
-      console.warn(`[job ${jobId}] expert prewarm batch failed:`, err);
-    });
-
     const bundle = await runBriefingPhase(jobId, topic, experts, quotes);
     throwIfCancelled(jobId);
     if (!bundle) return;
@@ -353,6 +332,33 @@ async function runSearchPhase(
     type: "searching_expert",
     message: `验证通过 ${verifiedExperts.length} 位真实专家`,
     expertsFound: verifiedExperts.length,
+  });
+
+  // Prewarm expert detail pages in the background. Fires here (end of Phase B)
+  // so it runs concurrently with Phase C (quote extraction) and Phase D
+  // (briefing generation) — by the time the user sees the briefing and clicks
+  // an expert, expert_cache is already populated and the drawer opens instantly.
+  //
+  // Burst control: prewarm uses { gentle: true } which caps each task's Friday
+  // calls to 2-in-flight (instead of firing all 5 in parallel). Combined with
+  // concurrency=3 here, the search backend sees max ~6 parallel Friday from
+  // prewarm — small enough to coexist with Phase C (~12 Haiku, occasional
+  // Friday for orphan experts) without triggering rate limits that previously
+  // cached poisoned "未搜索到" entries for every expert at once.
+  //
+  // Fire-and-forget — a failure must not affect the briefing itself.
+  prewarmExpertDetails(
+    verifiedExperts.map((e) => ({
+      name: e.name,
+      englishName: e.englishName,
+      title: e.title,
+      org: e.org,
+      englishOrg: e.englishOrg,
+      topic,
+    })),
+    3
+  ).catch((err) => {
+    console.warn(`[job ${jobId}] expert prewarm batch failed:`, err);
   });
 
   // Phase C: quote extraction (reuse Phase A results first)
