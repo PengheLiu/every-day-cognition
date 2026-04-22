@@ -231,7 +231,9 @@ async function runSearchPhase(
     });
   } else {
     const domainQueries = buildDomainSearchQueries(topic);
-    domainResults = await multiSearch(domainQueries, { topK: 5 });
+    // Wider topK (6) + more queries (14) gives the extractor 60-80 distinct
+    // pages of source material, enough to surface 30+ candidate names.
+    domainResults = await multiSearch(domainQueries, { topK: 6 });
     if (domainResults.length > 0) {
       setCachedDomainSearch(topic, domainResults);
     }
@@ -245,7 +247,10 @@ async function runSearchPhase(
 
   const extractionPrompt = buildExpertExtractionPrompt(
     topic,
-    domainResults.slice(0, 30).map((r) => ({
+    // Feed the LLM up to 50 results (was 30). With 30 we were consistently
+    // extracting only 10-15 candidates; the bottleneck was source diversity,
+    // not LLM capacity.
+    domainResults.slice(0, 50).map((r) => ({
       title: r.title,
       snippet: r.snippet,
       content: r.content?.slice(0, 1200) || "",
@@ -255,7 +260,9 @@ async function runSearchPhase(
   );
   const candidateJson = await chatCompletion(
     [{ role: "user", content: extractionPrompt }],
-    { temperature: 0.2, maxTokens: 3000, model: FAST_MODEL }
+    // 32 candidates × ~180 chars JSON = ~5800 chars. 6000 tokens gives
+    // headroom without risking truncation at the tail of the list.
+    { temperature: 0.2, maxTokens: 6000, model: FAST_MODEL }
   );
   let candidates: (ExpertInfo & { evidenceQuote?: string })[] = [];
   try {
@@ -266,6 +273,19 @@ async function runSearchPhase(
   }
   if (candidates.length === 0) return { experts: [], quotes: [] };
 
+  // Dedupe: same person may slip through under both Chinese + English name
+  // (prompt asks for it but LLM doesn't always comply). Key on lowercased
+  // name OR englishName — first occurrence wins.
+  {
+    const seen = new Set<string>();
+    candidates = candidates.filter((c) => {
+      const keys = [c.name, c.englishName].filter(Boolean).map((s) => s!.toLowerCase().trim());
+      if (keys.some((k) => seen.has(k))) return false;
+      keys.forEach((k) => seen.add(k));
+      return true;
+    });
+  }
+
   appendJobEvent(jobId, {
     type: "identifying_experts",
     message: `提取到 ${candidates.length} 位候选，开始验证身份...`,
@@ -273,29 +293,43 @@ async function runSearchPhase(
 
   // Phase B: independent verification with concurrency
   const verifiedExperts: ExpertInfo[] = [];
-  // Higher concurrency so 15+ candidates verify in a single batch
-  // (Friday search can handle it; LLM isn't involved here)
-  const PHASE_B_CONCURRENCY = 15;
+  // Concurrency scaled for ~30 candidate pool so the whole batch verifies in
+  // one round. Friday can handle it (no LLM in Phase B).
+  const PHASE_B_CONCURRENCY = 25;
 
   const verifyOne = async (cand: (typeof candidates)[number]) => {
     throwIfCancelled(jobId);
     if (!cand.name || cand.name.length < 2 || cand.name.length > 30) return;
     const q =
       cand.org && cand.org !== "未知" ? `${cand.name} ${cand.org}` : `${cand.name} ${topic}`;
-    const merged = await fridaySearch(q, { topK: 3 });
+    // topK 3 → 5: the old cap was rejecting many real experts whose top-3
+    // results happened to be bios/homepages without the topic keyword.
+    const merged = await fridaySearch(q, { topK: 5 });
     const nameLower = cand.name.toLowerCase();
+    const engLower = cand.englishName?.toLowerCase() || "";
     const topicLower = topic.toLowerCase();
-    const relevantCount = merged.filter((r) => {
+    const orgLower = cand.org && cand.org !== "未知" ? cand.org.toLowerCase() : "";
+
+    let nameHits = 0;
+    let strongHits = 0; // name + (topic OR org)
+    for (const r of merged) {
       const text = `${r.title} ${r.snippet} ${r.content}`.toLowerCase();
       const mentionsName =
-        text.includes(nameLower) ||
-        (cand.englishName && text.includes(cand.englishName.toLowerCase()));
+        text.includes(nameLower) || (engLower && text.includes(engLower));
+      if (!mentionsName) continue;
+      nameHits++;
       const mentionsContext =
-        text.includes(topicLower) ||
-        (cand.org && cand.org !== "未知" && text.includes(cand.org.toLowerCase()));
-      return mentionsName && mentionsContext;
-    }).length;
-    if (relevantCount >= 1) {
+        text.includes(topicLower) || (orgLower && text.includes(orgLower));
+      if (mentionsContext) strongHits++;
+    }
+
+    // Accept if:
+    //   - strong hit (name + topic/org in same result) ≥1, OR
+    //   - name appears in ≥2 of 5 results for a name+org/topic query (the
+    //     query itself binds topic, so name-repetition alone is already
+    //     evidence this is the right person).
+    const verified = strongHits >= 1 || nameHits >= 2;
+    if (verified) {
       verifiedExperts.push({
         name: cand.name,
         englishName: cand.englishName || undefined,
@@ -363,9 +397,9 @@ async function runSearchPhase(
 
   // Phase C: quote extraction (reuse Phase A results first)
   const allQuotes: (ExpertQuote & { dimension: string })[] = [];
-  // With Haiku being ~3s per call, 12 parallel calls fits in a single batch
-  // for most topics. Keeps 15 experts finishing in one round rather than two.
-  const PHASE_C_CONCURRENCY = 12;
+  // Scaled for ~20-25 verified experts so quote extraction still finishes in
+  // ~2 rounds. Haiku ~3s/call × 2 rounds ≈ 6-8s wall time.
+  const PHASE_C_CONCURRENCY = 18;
 
   const processExpert = async (expert: ExpertInfo) => {
     throwIfCancelled(jobId);

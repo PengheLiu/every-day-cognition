@@ -2,19 +2,29 @@
  * System prompts for the cognitive learning engine.
  */
 
-/** Step 0: Queries to find domain-level content — balanced Chinese + English */
+/** Step 0: Queries to find domain-level content — balanced Chinese + English.
+ * Broader query set surfaces more distinct names (target: 20+ verified experts
+ * per topic). Adds industry/investor/book/conference axes which cover people
+ * who don't show up in the "knows X researcher" vein.
+ */
 export function buildDomainSearchQueries(topic: string): string[] {
   return [
-    // Chinese (3 queries)
+    // Chinese (6 queries — covers academia, industry, investor, media angles)
     `${topic} 创始人 CEO 公司`,
     `${topic} 知名专家 学者 教授`,
     `${topic} 行业 领军人物 代表人物`,
-    // English (5 queries — skewed toward English to surface more international experts)
+    `${topic} 院士 首席科学家 研究员`,
+    `${topic} 投资人 红杉 高瓴 真格`,
+    `${topic} 书籍 作者 畅销书`,
+    // English (8 queries — skewed toward English to surface more international experts)
     `${topic} founder CEO startup company`,
     `${topic} leading researcher professor expert`,
     `${topic} pioneers thought leaders`,
     `${topic} Stanford MIT Google DeepMind`,
     `${topic} influential people 2024 2025`,
+    `${topic} VC investor partner`,
+    `${topic} author book bestseller`,
+    `${topic} keynote speaker conference`,
   ];
 }
 
@@ -40,12 +50,13 @@ ${resultsText}
 5. 不要捏造英文名；如果搜索结果里没有英文名，englishName 字段留空字符串
 
 提取目标：
-- 尽量提取 **12-18 位**（多一点更有代表性；后续会自动验证和剔除站不住的候选）
-- 覆盖不同角色（创始人/CEO、学者/教授、研究员、意见领袖、畅销书作者、资深从业者）
+- 尽量提取 **28-35 位**（目标验证通过 20+；后续会自动验证和剔除站不住的候选，所以宁多毋缺）
+- 覆盖不同角色（创始人/CEO、学者/教授、院士、研究员、投资人/合伙人、意见领袖、畅销书作者、资深从业者、产业布道者）
 - **中外兼顾**：必须同时包含**国外专家**（例如该领域的国际权威、美欧知名公司创始人、海外顶尖大学教授）和**中国专家**（国内公司创始人、高校学者、产业推动者）
 - **国外专家至少占 40%**（如果搜索结果里有相关信息）
 - 英文人名请保持英文，不要翻译成中文（例如 "Geoffrey Hinton" 不要写成 "辛顿"）
 - 按搜索结果中被提及的影响力排序
+- 同一人只出现一次（查重：如果搜索结果里中英文两种写法都出现，合并为一条，name 填中文，englishName 填英文）
 
 输出格式：必须是合法的 JSON 数组，首字符是 \`[\`。不要 markdown 围栏，不要 JSON 外的文字。
 
