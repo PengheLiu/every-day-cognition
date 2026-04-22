@@ -9,6 +9,7 @@ import { GeneratingStatus } from "@/components/GeneratingStatus";
 import { ChatPanel } from "@/components/ChatPanel";
 import { ExpertDetailModal } from "@/components/ExpertDetailModal";
 import { ShareButton } from "@/components/ShareButton";
+import { ImageLightbox } from "@/components/ImageLightbox";
 import type {
   Briefing,
   SearchProgressEvent,
@@ -31,6 +32,7 @@ function BriefingContent() {
   const [chatOpen, setChatOpen] = useState(false);
   const [chatInitialQ, setChatInitialQ] = useState<string | undefined>();
   const [selectedExpert, setSelectedExpert] = useState<ExpertInfo | null>(null);
+  const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const hasStarted = useRef(false);
@@ -364,15 +366,24 @@ function BriefingContent() {
       {/* Briefing content */}
       {briefing && phase === "done" && (
         <div className="space-y-5 animate-in fade-in duration-500">
-          {/* Hero image */}
+          {/* Hero image — object-contain (not cover) so the whole illustration
+              stays visible even if Gemini returns a non-16:9 ratio. Click to
+              open in a fullscreen lightbox. */}
           {briefing.heroImageUrl ? (
-            <div className="rounded-xl overflow-hidden shadow-sm bg-muted aspect-[16/9] animate-in fade-in zoom-in-95 duration-500">
+            <button
+              type="button"
+              onClick={() =>
+                setLightbox({ src: briefing.heroImageUrl!, alt: briefing.topic })
+              }
+              className="block w-full rounded-xl overflow-hidden shadow-sm bg-muted aspect-[16/9] animate-in fade-in zoom-in-95 duration-500 cursor-zoom-in group"
+              aria-label="点击放大查看主图"
+            >
               <img
                 src={briefing.heroImageUrl}
                 alt={briefing.topic}
-                className="w-full h-full object-cover"
+                className="w-full h-full object-contain transition-transform group-hover:scale-[1.02]"
               />
-            </div>
+            </button>
           ) : heroImageFailed ? (
             <div className="rounded-xl overflow-hidden bg-gradient-to-br from-primary/10 via-accent/10 to-primary/5 aspect-[16/9] flex items-center justify-center border border-primary/10">
               <div className="flex flex-col items-center gap-2 text-muted-foreground">
@@ -473,6 +484,7 @@ function BriefingContent() {
               <DimensionCard
                 key={dim.key}
                 dimension={dim}
+                onClickImage={(src, alt) => setLightbox({ src, alt })}
                 onClickExpert={(name) => {
                   const matched = briefing.experts?.find((e) => e.name === name);
                   if (matched) {
@@ -518,6 +530,15 @@ function BriefingContent() {
           expert={selectedExpert}
           topic={topic}
           onClose={() => setSelectedExpert(null)}
+        />
+      )}
+
+      {/* Image lightbox */}
+      {lightbox && (
+        <ImageLightbox
+          src={lightbox.src}
+          alt={lightbox.alt}
+          onClose={() => setLightbox(null)}
         />
       )}
     </main>

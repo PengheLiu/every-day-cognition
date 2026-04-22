@@ -92,6 +92,7 @@ export function buildHeroImagePrompt(topic: string): string {
     `- Keep text labels short (1-3 English words), large enough to read, with clean sans-serif font.`,
     `- Double-check every glyph in the image is a valid English letter or Arabic numeral.`,
     `Wide landscape aspect ratio (16:9), suitable as a hero banner.`,
+    `CRITICAL: keep the title and all labels/icons within an inner safe area — at least 8% padding from every edge — so the briefing UI never crops them.`,
   ].join(" ");
 }
 
@@ -113,6 +114,7 @@ export function buildDimensionImagePrompt(topic: string, dimensionLabel: string,
     `- ABSOLUTELY NO Chinese characters, NO Japanese, NO Korean, NO non-Latin scripts — they render as garbled glyphs.`,
     `- Keep English labels short (1-3 words), large enough to read, with clean sans-serif font.`,
     `- Double-check every glyph in the image is a valid English letter or Arabic numeral.`,
-    `Square aspect ratio (1:1).`,
+    `Wide landscape aspect ratio (16:9), same layout as the hero banner — fills the dimension card without cropping.`,
+    `CRITICAL: keep all labels and icons within an inner safe area — at least 8% padding from every edge — so the briefing UI never crops them.`,
   ].join(" ");
 }

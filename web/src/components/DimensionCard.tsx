@@ -18,9 +18,11 @@ const DIMENSION_ICONS: Record<string, string> = {
 export function DimensionCard({
   dimension,
   onClickExpert,
+  onClickImage,
 }: {
   dimension: DimensionContent;
   onClickExpert?: (name: string) => void;
+  onClickImage?: (src: string, alt: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const meta = DIMENSION_META[dimension.key];
@@ -55,15 +57,26 @@ export function DimensionCard({
       </CardHeader>
 
       <CardContent className="pt-0 space-y-3">
-        {/* Dimension image */}
+        {/* Dimension image — object-contain (not cover) so the whole
+            illustration stays visible even when Gemini returns a ratio that
+            doesn't match the 16:9 container (otherwise text near the edges
+            gets cropped). Click opens a fullscreen lightbox. */}
         {dimension.imageUrl ? (
-          <div className="rounded-lg overflow-hidden bg-muted aspect-[16/9] flex items-center justify-center">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onClickImage?.(dimension.imageUrl!, meta?.label || dimension.key);
+            }}
+            className="block w-full rounded-lg overflow-hidden bg-muted aspect-[16/9] flex items-center justify-center cursor-zoom-in group"
+            aria-label="点击放大查看"
+          >
             <img
               src={dimension.imageUrl}
               alt={meta?.label || dimension.key}
-              className="w-full h-full object-cover"
+              className="w-full h-full object-contain transition-transform group-hover:scale-[1.02]"
             />
-          </div>
+          </button>
         ) : null}
 
         {/* Summary */}
