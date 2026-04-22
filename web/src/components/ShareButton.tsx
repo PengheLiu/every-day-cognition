@@ -3,6 +3,43 @@
 import { useState } from "react";
 
 /**
+ * Copy text to the clipboard with a graceful fallback.
+ * - Secure contexts (HTTPS / localhost): uses the async Clipboard API.
+ * - Insecure contexts (plain HTTP on internal IPs, etc.): drops to a hidden
+ *   textarea + document.execCommand("copy"). Deprecated but still works in
+ *   every major browser and is the only option without HTTPS.
+ */
+async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // fall through to legacy path
+  }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "0";
+    ta.style.left = "0";
+    ta.style.opacity = "0";
+    ta.style.pointerEvents = "none";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Share button for the briefing page.
  *   - Mobile: uses navigator.share (native share sheet on iOS/Android)
  *   - Desktop / no Web Share API: copies canonical URL to clipboard + toast
@@ -46,12 +83,12 @@ export function ShareButton({
       }
     }
 
-    // Fallback: clipboard
-    try {
-      await navigator.clipboard.writeText(url);
+    // Fallback: clipboard. `navigator.clipboard` is only available in secure
+    // contexts (HTTPS or localhost); plain-HTTP deployments fall back to the
+    // legacy execCommand path via a hidden textarea so copy still works.
+    if (await copyToClipboard(url)) {
       showToast("链接已复制");
-    } catch {
-      // Last resort: show URL in prompt (uncommon)
+    } else {
       showToast("复制失败，请手动复制地址栏链接");
     }
   };

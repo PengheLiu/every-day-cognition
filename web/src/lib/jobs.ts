@@ -35,6 +35,7 @@ import {
 import type { SearchResultItem } from "./search";
 import { chatCompletion, FAST_MODEL } from "./openrouter";
 import { multiSearch, fridaySearch } from "./search";
+import { prewarmExpertDetails } from "./expert-detail";
 import {
   buildDomainSearchQueries,
   buildExpertExtractionPrompt,
@@ -331,6 +332,25 @@ async function runSearchPhase(
     type: "searching_expert",
     message: `验证通过 ${verifiedExperts.length} 位真实专家`,
     expertsFound: verifiedExperts.length,
+  });
+
+  // Prewarm expert-detail pages in the background — runs concurrently with
+  // Phase C (quote extraction) and Phase D (briefing generation), so by the
+  // time the user sees the briefing and clicks an expert, `expert_cache` is
+  // already populated. Fire-and-forget: a failure here must not affect the
+  // main pipeline.
+  prewarmExpertDetails(
+    verifiedExperts.map((e) => ({
+      name: e.name,
+      englishName: e.englishName,
+      title: e.title,
+      org: e.org,
+      englishOrg: e.englishOrg,
+      topic,
+    })),
+    4
+  ).catch((err) => {
+    console.warn(`[job ${jobId}] expert prewarm batch failed:`, err);
   });
 
   // Phase C: quote extraction (reuse Phase A results first)

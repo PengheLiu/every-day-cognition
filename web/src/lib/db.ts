@@ -12,6 +12,7 @@
  *  - topic_stats    (topic, count, last_searched_at)
  *  - briefing_cache (topic, payload, expires_at)
  *  - expert_cache   (key, payload, expires_at)
+ *  - image_cache    (key, url, expires_at)
  *  - domain_search_cache (topic, results, expires_at)
  *  - generation_jobs (id, user_id, topic, status, progress_message, events, ...)
  */
@@ -147,6 +148,16 @@ function initSchema(d: DatabaseSyncType) {
       expires_at INTEGER NOT NULL
     );
 
+    -- Generated illustration cache. Key = "{kind}::{normalizedTopic}[::{dimLabel}]".
+    -- URL is the base64 data URL returned by the image model. Images are
+    -- deterministic per (topic, dimension) so we persist them across refreshes
+    -- and share across users — avoids regenerating on every page load.
+    CREATE TABLE IF NOT EXISTS image_cache (
+      key TEXT PRIMARY KEY,
+      url TEXT NOT NULL,
+      expires_at INTEGER NOT NULL
+    );
+
     -- Phase A domain-level search results, shared across users for a topic.
     -- Much cheaper than re-running 8 Bing/Baidu searches every time.
     CREATE TABLE IF NOT EXISTS domain_search_cache (
@@ -235,6 +246,40 @@ export function setCachedExpert(
   db.prepare(
     "INSERT OR REPLACE INTO expert_cache (key, payload, expires_at) VALUES (?, ?, ?)"
   ).run(key, JSON.stringify(payload), Date.now() + ttlMs);
+}
+
+// ---------- Image cache ----------
+
+/** Build a canonical cache key for a hero/dimension image. */
+export function imageCacheKey(
+  kind: "hero" | "dimension",
+  topic: string,
+  dimensionLabel?: string
+): string {
+  const base = `${kind}::${normalizeTopic(topic)}`;
+  return dimensionLabel ? `${base}::${dimensionLabel.trim()}` : base;
+}
+
+export function getCachedImage(key: string): string | null {
+  const row = db
+    .prepare("SELECT url, expires_at FROM image_cache WHERE key = ?")
+    .get(key) as { url: string; expires_at: number } | undefined;
+  if (!row) return null;
+  if (row.expires_at < Date.now()) {
+    db.prepare("DELETE FROM image_cache WHERE key = ?").run(key);
+    return null;
+  }
+  return row.url;
+}
+
+export function setCachedImage(
+  key: string,
+  url: string,
+  ttlMs = 7 * 24 * 60 * 60 * 1000 // 7 days — images don't track trends like briefings do
+) {
+  db.prepare(
+    "INSERT OR REPLACE INTO image_cache (key, url, expires_at) VALUES (?, ?, ?)"
+  ).run(key, url, Date.now() + ttlMs);
 }
 
 /** Phase A domain search results — shared across users per topic. */
