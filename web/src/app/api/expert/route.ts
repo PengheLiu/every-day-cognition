@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: "name and topic required" }, { status: 400 });
   }
 
-  // Cache check (1 day)
+  // Cache check (full hits 7d, empty/disambiguation 1h — see bottom of handler)
   const cached = getCachedExpert(name, topic);
   if (cached) {
     return Response.json(cached);
@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
     ]);
 
     if (searchResults.length === 0) {
-      return Response.json({
+      const emptyDetail: ExpertDetail = {
         name,
         englishName,
         currentTitle: `${title}${org && org !== "未知" ? ", " + org : ""}`,
@@ -50,7 +50,12 @@ export async function POST(req: NextRequest) {
         recentUpdates: [],
         links: [],
         disambiguation: "未搜索到相关公开信息",
-      } satisfies ExpertDetail);
+        scholarProfileUrl: scholarProfileUrl || undefined,
+      };
+      // Cache the miss for 1h so we don't re-fire the same Friday queries
+      // every time the user reopens this expert's drawer.
+      setCachedExpert(name, topic, emptyDetail, 60 * 60 * 1000);
+      return Response.json(emptyDetail);
     }
 
     const extractionPrompt = buildExpertDetailPrompt(
@@ -96,10 +101,10 @@ export async function POST(req: NextRequest) {
       scholarProfileUrl: scholarProfileUrl || undefined,
     };
 
-    // Only cache successful extractions (not disambiguation misses or empties)
-    if (detail.biography || detail.currentStatus) {
-      setCachedExpert(name, topic, detail);
-    }
+    // Full hit → 7d (default). Partial/disambiguation miss → 1h so the heavy
+    // search+LLM path isn't re-run on every reopen but a retry can succeed soon.
+    const isFullHit = !!(detail.biography || detail.currentStatus);
+    setCachedExpert(name, topic, detail, isFullHit ? undefined : 60 * 60 * 1000);
 
     return Response.json(detail);
   } catch (err) {
