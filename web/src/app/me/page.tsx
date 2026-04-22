@@ -12,6 +12,7 @@ interface HistoryItem {
 interface Me {
   id: string;
   phone: string;
+  nickname: string | null;
 }
 
 function formatRelative(ts: number): string {
@@ -78,14 +79,14 @@ export default function MePage() {
       {/* Profile header */}
       <div className="rounded-xl border bg-card p-5 mb-6 flex items-center gap-4">
         <div className="w-14 h-14 rounded-full bg-gradient-to-br from-primary to-accent flex items-center justify-center text-white text-lg font-semibold">
-          {me.phone.slice(-2)}
+          {(me.nickname?.trim()?.[0] || me.phone.slice(-2, -1)).toUpperCase()}
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-lg font-semibold">
-            {me.phone.slice(0, 3) + "****" + me.phone.slice(7)}
+          <div className="text-lg font-semibold truncate">
+            {me.nickname?.trim() || me.phone.slice(0, 3) + "****" + me.phone.slice(7)}
           </div>
           <div className="text-xs text-muted-foreground">
-            共探索过 {history.length} 个领域
+            {me.phone.slice(0, 3) + "****" + me.phone.slice(7)} · 共探索过 {history.length} 个领域
           </div>
         </div>
         <button

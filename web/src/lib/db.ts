@@ -79,9 +79,23 @@ function getRealDb(): DatabaseSyncType {
   instance.exec("PRAGMA journal_mode = WAL");
   instance.exec("PRAGMA foreign_keys = ON");
   initSchema(instance);
+  runMigrations(instance);
   _dbInstance = instance;
   if (process.env.NODE_ENV !== "production") global.__ca_db = instance;
   return instance;
+}
+
+/**
+ * Forward-compatibility migrations for existing databases. `CREATE TABLE IF
+ * NOT EXISTS` doesn't add new columns to tables that already exist, so any
+ * schema additions have to be applied explicitly here.
+ */
+function runMigrations(d: DatabaseSyncType) {
+  // Add users.nickname on existing dbs. New dbs already have it from initSchema.
+  const userCols = d.prepare("PRAGMA table_info(users)").all() as { name: string }[];
+  if (!userCols.some((c) => c.name === "nickname")) {
+    d.exec("ALTER TABLE users ADD COLUMN nickname TEXT");
+  }
 }
 
 /**
@@ -102,6 +116,7 @@ function initSchema(d: DatabaseSyncType) {
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       phone TEXT NOT NULL UNIQUE,
+      nickname TEXT,
       created_at INTEGER NOT NULL
     );
 

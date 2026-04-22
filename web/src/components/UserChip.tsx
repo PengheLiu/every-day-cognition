@@ -2,17 +2,17 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter, usePathname } from "next/navigation";
+import { usePathname } from "next/navigation";
 
 interface Me {
   id: string;
   phone: string;
+  nickname: string | null;
 }
 
 export function UserChip() {
   const [me, setMe] = useState<Me | null | undefined>(undefined); // undefined = loading
   const [open, setOpen] = useState(false);
-  const router = useRouter();
   const pathname = usePathname();
 
   // Refresh auth state on mount AND when pathname changes (so navigating back
@@ -70,7 +70,12 @@ export function UserChip() {
     );
   }
 
-  const phoneMask = me.phone.slice(0, 3) + "****" + me.phone.slice(7);
+  // Prefer the nickname for display; fall back to a masked phone for legacy
+  // accounts created before the nickname field existed.
+  const displayName =
+    me.nickname?.trim() || me.phone.slice(0, 3) + "****" + me.phone.slice(7);
+  // Avatar initial: first character of the nickname (or first phone digit).
+  const initial = (me.nickname?.trim()?.[0] || me.phone.slice(-2, -1)).toUpperCase();
 
   return (
     <div className="relative" data-user-chip>
@@ -79,10 +84,10 @@ export function UserChip() {
         className="flex items-center gap-2 px-2 py-1.5 rounded-full hover:bg-muted transition-colors"
       >
         <div className="w-7 h-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-semibold">
-          {me.phone.slice(-2)}
+          {initial}
         </div>
-        <span className="text-sm text-foreground hidden sm:inline">
-          {phoneMask}
+        <span className="text-sm text-foreground hidden sm:inline max-w-[8rem] truncate">
+          {displayName}
         </span>
       </button>
 

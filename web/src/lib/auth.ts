@@ -1,6 +1,7 @@
 /**
- * Authentication helpers — phone + code login, session via HTTP-only cookie.
- * In dev mode, any phone accepts the fixed code "123456".
+ * Authentication helpers — nickname + phone login (no SMS / verification),
+ * session via HTTP-only cookie. The phone is the unique account key; the
+ * nickname is the display name shown in the top bar.
  */
 import crypto from "crypto";
 import { cookies } from "next/headers";
@@ -8,48 +9,42 @@ import { db } from "./db";
 
 const SESSION_COOKIE = "ca_session";
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
-const CODE_TTL_MS = 10 * 60 * 1000; // 10 min
-const DEV_FIXED_CODE = "123456";
 
 export interface User {
   id: string;
   phone: string;
+  nickname: string | null;
   createdAt: number;
 }
 
-/** Generate a new verify code for a phone (dev: always "123456"). */
-export function issueVerifyCode(phone: string): string {
-  const code = DEV_FIXED_CODE;
-  db.prepare(
-    "INSERT OR REPLACE INTO verify_codes (phone, code, expires_at) VALUES (?, ?, ?)"
-  ).run(phone, code, Date.now() + CODE_TTL_MS);
-  return code;
-}
+/**
+ * Find user by phone; if they exist, update their nickname to the one they
+ * just submitted (so returning users can change their display name). If not,
+ * create a new row with the provided nickname.
+ */
+export function findOrCreateUser(phone: string, nickname: string): User {
+  const trimmed = nickname.trim();
+  const now = Date.now();
 
-/** Verify a code and return true if valid. Deletes the code on success. */
-export function verifyCode(phone: string, code: string): boolean {
-  const row = db
-    .prepare("SELECT code, expires_at FROM verify_codes WHERE phone = ?")
-    .get(phone) as { code: string; expires_at: number } | undefined;
-  if (!row) return false;
-  if (row.expires_at < Date.now()) return false;
-  if (row.code !== code) return false;
-  // Invalidate on use
-  db.prepare("DELETE FROM verify_codes WHERE phone = ?").run(phone);
-  return true;
-}
-
-/** Find user by phone or create a new one. */
-export function findOrCreateUser(phone: string): User {
   const existing = db
-    .prepare("SELECT id, phone, created_at as createdAt FROM users WHERE phone = ?")
+    .prepare(
+      "SELECT id, phone, nickname, created_at as createdAt FROM users WHERE phone = ?"
+    )
     .get(phone) as User | undefined;
-  if (existing) return existing;
+
+  if (existing) {
+    if (trimmed && trimmed !== existing.nickname) {
+      db.prepare("UPDATE users SET nickname = ? WHERE id = ?").run(trimmed, existing.id);
+      return { ...existing, nickname: trimmed };
+    }
+    return existing;
+  }
 
   const id = crypto.randomUUID();
-  const now = Date.now();
-  db.prepare("INSERT INTO users (id, phone, created_at) VALUES (?, ?, ?)").run(id, phone, now);
-  return { id, phone, createdAt: now };
+  db.prepare(
+    "INSERT INTO users (id, phone, nickname, created_at) VALUES (?, ?, ?, ?)"
+  ).run(id, phone, trimmed || null, now);
+  return { id, phone, nickname: trimmed || null, createdAt: now };
 }
 
 /** Create a session and return the token. */
@@ -68,7 +63,8 @@ export function deleteSession(token: string) {
 export function getUserByToken(token: string): User | null {
   const row = db
     .prepare(
-      `SELECT u.id, u.phone, u.created_at as createdAt, s.expires_at as sessionExpires
+      `SELECT u.id, u.phone, u.nickname, u.created_at as createdAt,
+              s.expires_at as sessionExpires
        FROM sessions s JOIN users u ON u.id = s.user_id
        WHERE s.token = ?`
     )
@@ -78,7 +74,12 @@ export function getUserByToken(token: string): User | null {
     deleteSession(token);
     return null;
   }
-  return { id: row.id, phone: row.phone, createdAt: row.createdAt };
+  return {
+    id: row.id,
+    phone: row.phone,
+    nickname: row.nickname,
+    createdAt: row.createdAt,
+  };
 }
 
 /** Read current user from the request cookie. */
