@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 """
-网页爬取与解析客户端
-接口：POST /sa/web_browse/crawl_and_parse
+网页爬取与解析客户端（参考实现）
+
+从 CRAWL_API_URL 环境变量读取后端地址；账号密码通过 CRAWL_API_USERNAME /
+CRAWL_API_PASSWORD 传入。仅供批量调试 / 离线实验使用，web 端不依赖本文件。
 """
 
+import os
 import requests
 import json
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 @dataclass
@@ -43,12 +49,15 @@ class CrawlAndParseClient:
 
     def __init__(
         self,
-        url: str = "http://agi.sankuai.com/sa/web_browse/crawl_and_parse",
-        username: str = "beam",
-        password: str = "mima_for_beam",
+        url: Optional[str] = None,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
     ):
-        self.url = url
-        self.auth = (username, password)
+        self.url = url or os.getenv("CRAWL_API_URL", "")
+        self.auth = (
+            username or os.getenv("CRAWL_API_USERNAME", ""),
+            password or os.getenv("CRAWL_API_PASSWORD", ""),
+        )
 
     def crawl(self, params: CrawlAndParseParams) -> CrawlAndParseResponse:
         """
@@ -65,6 +74,9 @@ class CrawlAndParseClient:
             "timeout_in_ms": params.timeout_in_ms,
             "noProxy": params.no_proxy,
         }
+
+        if not self.url:
+            return CrawlAndParseResponse(code=500, msg="CRAWL_API_URL not configured")
 
         try:
             response = requests.post(

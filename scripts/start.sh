@@ -31,11 +31,14 @@ export NODE_ENV="${NODE_ENV:-production}"
 # node:sqlite is experimental in Node 22.x — enable via flag (stable in 24+)
 export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--experimental-sqlite --no-warnings=ExperimentalWarning"
 
-# If a corporate HTTP proxy is set but NO_PROXY is empty, auto-exempt common
-# internal hostnames so the search / LLM gateways aren't routed through the external proxy.
+# If a corporate HTTP proxy is set but NO_PROXY is empty, exempt localhost
+# so local dev server calls don't try to tunnel through the proxy.
+# For deployments that also need internal-only hostnames bypassed (search / LLM
+# gateways), set NO_PROXY explicitly in your .env / .env.local, e.g.:
+#   NO_PROXY=localhost,127.0.0.1,.your-internal-domain.com
 if [[ -n "${HTTP_PROXY:-}${HTTPS_PROXY:-}${http_proxy:-}${https_proxy:-}" ]]; then
   if [[ -z "${NO_PROXY:-}${no_proxy:-}" ]]; then
-    export NO_PROXY="localhost,127.0.0.1,.sankuai.com,.meituan.com"
+    export NO_PROXY="localhost,127.0.0.1"
     export no_proxy="$NO_PROXY"
   fi
 fi
@@ -177,7 +180,7 @@ fi
 # Re-export cookie/proxy settings that may have been set by env files
 if [[ -n "${HTTP_PROXY:-}${HTTPS_PROXY:-}${http_proxy:-}${https_proxy:-}" ]]; then
   if [[ -z "${NO_PROXY:-}${no_proxy:-}" ]]; then
-    export NO_PROXY="localhost,127.0.0.1,.sankuai.com,.meituan.com"
+    export NO_PROXY="localhost,127.0.0.1"
     export no_proxy="$NO_PROXY"
   fi
 fi

@@ -4,8 +4,8 @@
  *
  * We use it to register undici's EnvHttpProxyAgent so Node's global fetch()
  * respects HTTP_PROXY / HTTPS_PROXY / NO_PROXY environment variables —
- * essential in corporate networks (Meituan internal, CentOS 7 codelab) where
- * all egress must go through a proxy, but internal services must not.
+ * essential in corporate networks / CentOS 7 codelab-style hosts where all
+ * external egress must go through a proxy but internal services must not.
  *
  * Without this, fetch("https://openrouter.ai/...") silently fails with
  * "fetch failed" (ENOTFOUND / ETIMEDOUT) even when curl works.
