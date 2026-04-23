@@ -34,7 +34,7 @@ import {
 } from "./db";
 import type { SearchResultItem } from "./search";
 import { chatCompletion, FAST_MODEL } from "./openrouter";
-import { multiSearch, fridaySearch } from "./search";
+import { multiSearch, webSearch } from "./search";
 import { prewarmExpertDetails } from "./expert-detail";
 import {
   buildDomainSearchQueries,
@@ -294,7 +294,7 @@ async function runSearchPhase(
   // Phase B: independent verification with concurrency
   const verifiedExperts: ExpertInfo[] = [];
   // Concurrency scaled for ~30 candidate pool so the whole batch verifies in
-  // one round. Friday can handle it (no LLM in Phase B).
+  // one round. The search API can handle it (no LLM in Phase B).
   const PHASE_B_CONCURRENCY = 25;
 
   const verifyOne = async (cand: (typeof candidates)[number]) => {
@@ -304,7 +304,7 @@ async function runSearchPhase(
       cand.org && cand.org !== "未知" ? `${cand.name} ${cand.org}` : `${cand.name} ${topic}`;
     // topK 3 → 5: the old cap was rejecting many real experts whose top-3
     // results happened to be bios/homepages without the topic keyword.
-    const merged = await fridaySearch(q, { topK: 5 });
+    const merged = await webSearch(q, { topK: 5 });
     const nameLower = cand.name.toLowerCase();
     const engLower = cand.englishName?.toLowerCase() || "";
     const topicLower = topic.toLowerCase();
@@ -375,8 +375,8 @@ async function runSearchPhase(
   //
   // With ~20 verified experts and per-task time ~10s (gentle mode adds latency),
   // we need higher concurrency to finish before the user starts clicking.
-  // concurrency=5 + gentle (each task caps Friday to 2 in-flight) gives:
-  //   - Friday peak from prewarm: 5 × 2 = 10 parallel
+  // concurrency=5 + gentle (each task caps search to 2 in-flight) gives:
+  //   - Search peak from prewarm: 5 × 2 = 10 parallel
   //   - 20 experts / 5 = 4 batches × 10s = ~40s total
   // The in-flight dedup in fetchExpertDetail also covers the "user clicks
   // before prewarm finishes that expert" case — the click awaits the

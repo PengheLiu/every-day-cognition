@@ -32,7 +32,7 @@
 | 数据库 | SQLite（Node.js 22 内置 `node:sqlite`，零原生依赖） |
 | LLM | OpenRouter（默认 Claude Sonnet 4.5 + Haiku 4.5），可替换任意 OpenAI 兼容接口 |
 | 图像 | Gemini 2.5 Flash Image（经 OpenRouter） |
-| 搜索 | Friday 通用搜索（见下方「搜索源」） |
+| 搜索 | 通用 Web 搜索 API（见下方「搜索源」） |
 | 认证 | Session cookie（JWT） |
 
 ## 快速开始
@@ -43,7 +43,7 @@ cd every-day-cognition/web
 
 # 1. 配置环境变量
 cp .env.example .env.local
-# 编辑 .env.local 填入你的 LLM_API_KEY（OpenRouter）+ FRIDAY_API_KEY（或替换搜索源，见下）
+# 编辑 .env.local 填入你的 LLM_API_KEY（OpenRouter）+ SEARCH_API_KEY（或替换搜索源，见下）
 
 # 2. 启动开发服务器
 npm install
@@ -69,19 +69,19 @@ npm run dev
 | `LLM_MODEL` | 主模型（默认 `anthropic/claude-sonnet-4.5`） | ✅ |
 | `LLM_FAST_MODEL` | 快速模型，用于专家提取 / 维度生成（默认 `anthropic/claude-haiku-4.5`） | ✅ |
 | `IMAGE_MODEL` | 图像生成模型（默认 `google/gemini-2.5-flash-image`） | 可选 |
-| `FRIDAY_SEARCH_URL` + `FRIDAY_API_KEY` | 搜索服务 | ✅ |
+| `SEARCH_API_URL` + `SEARCH_API_KEY` | 搜索 API（见下方「搜索源」） | ✅ |
 | `CRAWL_API_URL` | 网页抓取（预留，当前未启用） | 可选 |
 
 > **敏感信息绝对不要提交**：`.env`、`.env.local`、`.env.*.local` 都已在 `.gitignore` 白名单里。
 
 ## 搜索源（重要）
 
-项目默认调用的 **Friday 通用搜索**（`agi.sankuai.com`）是美团内网服务，外网不可达。想在公网运行，有两条路：
+仓库里不绑定任何具体的搜索供应商 —— `SEARCH_API_URL` / `SEARCH_API_KEY` 留空时 `webSearch()` 直接返回空数组并打印一行告警。自己接入即可：
 
-1. **替换成公网搜索 API**：修改 [`web/src/lib/search.ts`](web/src/lib/search.ts)，把 Friday 请求替换成 [Tavily](https://tavily.com) / [Serper](https://serper.dev) / [Brave Search](https://brave.com/search/api/) / [SerpAPI](https://serpapi.com/) 任一家。接口契约：输入 query + 路由（`baidu-search-v2` 走中文、`bing` 走国际），输出 `{title, url, snippet}[]`。
-2. **在内网机器部署**：如果你也在美团内部，直接用跳板机 / VPN 里的容器跑。
+1. **公网搜索 API**：改 [`web/src/lib/search.ts`](web/src/lib/search.ts) 里的 `webSearch()` 函数体，把请求 body / response 映射换成 [Tavily](https://tavily.com) / [Serper](https://serper.dev) / [Brave Search](https://brave.com/search/api/) / [SerpAPI](https://serpapi.com/) 任一家。接口契约：输入 query + 路由（`baidu-search-v2` 走中文、`bing` 走国际 / Scholar / Twitter），输出 `{url, title, snippet, content, source, publishTime}[]`。
+2. **自建或内网搜索网关**：保持现有请求结构（POST + Bearer），仅配置 `.env.local` 里的两个变量即可。
 
-Python 参考实现（`friday_search.py` / `web_fetch.py`）仅供了解调用方式，web 端实际走的是 `web/src/lib/search.ts`。
+Python 参考实现（[`search_client.py`](search_client.py) / [`web_fetch.py`](web_fetch.py)）仅供了解调用方式，web 端实际走的是 `web/src/lib/search.ts`。
 
 ## 目录结构
 
@@ -98,7 +98,7 @@ Python 参考实现（`friday_search.py` / `web_fetch.py`）仅供了解调用�
 │   │   └── lib/            # db.ts / auth.ts / openrouter.ts / search.ts / prompts.ts / json-repair.ts
 │   ├── public/             # 图标 / manifest / service worker
 │   └── data/               # SQLite 数据库（gitignored）
-├── friday_search.py        # Friday 搜索 API Python 参考实现
+├── search_client.py        # 搜索 API Python 参考实现
 ├── web_fetch.py            # 网页抓取 API Python 参考实现
 ├── scripts/start.sh        # 一键启动脚本（支持老版 CentOS / GLIBC 2.17）
 ├── Dockerfile              # 多阶段生产镜像（node:22-bookworm-slim，~250MB）

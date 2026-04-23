@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { chatCompletion } from "@/lib/openrouter";
-import { multiSearch, fridaySearch } from "@/lib/search";
+import { multiSearch, webSearch } from "@/lib/search";
 import {
   buildDomainSearchQueries,
   buildExpertExtractionPrompt,
@@ -88,7 +88,7 @@ export async function POST(req: NextRequest) {
         });
 
         // ----- Phase B: Verify each candidate independently -----
-        // Use concurrency limit to avoid overloading Friday search API.
+        // Use concurrency limit to avoid overloading the search API.
         const verifiedExperts: ExpertInfo[] = [];
         const PHASE_B_CONCURRENCY = 8;
 
@@ -101,7 +101,7 @@ export async function POST(req: NextRequest) {
               ? `${cand.name} ${cand.org}`
               : `${cand.name} ${topic}`;
 
-          const merged = await fridaySearch(q, { topK: 3 });
+          const merged = await webSearch(q, { topK: 3 });
           const relevantCount = merged.filter((r) => {
             const text = `${r.title} ${r.snippet} ${r.content}`.toLowerCase();
             const nameLower = cand.name.toLowerCase();
@@ -179,7 +179,7 @@ export async function POST(req: NextRequest) {
           });
 
           // Strategy 1: Filter already-fetched Phase A results by expert name
-          // (avoids hammering Friday API again after Phase A+B)
+          // (avoids hammering the search API again after Phase A+B)
           const nameLower = expert.name.toLowerCase();
           const engLower = expert.englishName?.toLowerCase() || "";
           const filteredFromDomain = domainResults.filter((r) => {

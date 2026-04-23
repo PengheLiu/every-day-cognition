@@ -32,7 +32,7 @@ export NODE_ENV="${NODE_ENV:-production}"
 export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--experimental-sqlite --no-warnings=ExperimentalWarning"
 
 # If a corporate HTTP proxy is set but NO_PROXY is empty, auto-exempt common
-# internal hostnames so Friday / MT AIGC aren't routed through the external proxy.
+# internal hostnames so the search / LLM gateways aren't routed through the external proxy.
 if [[ -n "${HTTP_PROXY:-}${HTTPS_PROXY:-}${http_proxy:-}${https_proxy:-}" ]]; then
   if [[ -z "${NO_PROXY:-}${no_proxy:-}" ]]; then
     export NO_PROXY="localhost,127.0.0.1,.sankuai.com,.meituan.com"

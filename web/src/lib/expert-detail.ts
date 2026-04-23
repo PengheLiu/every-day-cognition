@@ -26,7 +26,7 @@ import type { ExpertDetail } from "./types";
  *
  * Why: prewarm fires N expert fetches in parallel during briefing generation.
  * If the user clicks an expert WHILE its prewarm fetch is still running, the
- * naive code starts a duplicate fetch — wasting Friday/LLM quota and racing
+ * naive code starts a duplicate fetch — wasting search/LLM quota and racing
  * the cache write. With this map, the user-click path notices an in-flight
  * Promise for the same (name, topic) and just awaits it. So:
  *
@@ -50,10 +50,10 @@ export interface FetchExpertDetailInput {
 
 export interface FetchExpertDetailOptions {
   /**
-   * "Gentle" mode caps the in-flight Friday calls per task to 2 (instead of
+   * "Gentle" mode caps the in-flight search calls per task to 2 (instead of
    * firing all 5-6 detail queries in parallel). Use this when fetchExpertDetail
    * is being driven by a batch — e.g. prewarming N experts at once during
-   * briefing generation. Without this, prewarm bursts ~20+ Friday requests
+   * briefing generation. Without this, prewarm bursts ~20+ search requests
    * per second, the backend rate-limits, and we end up caching empty results
    * for every expert simultaneously.
    *
@@ -96,19 +96,19 @@ async function doFetchExpertDetail(
   options: FetchExpertDetailOptions
 ): Promise<ExpertDetail> {
   const { name, englishName, title, org, englishOrg, topic } = input;
-  const friday = options.gentle ? { topK: 5, concurrency: 2 } : { topK: 5 };
+  const searchOpts = options.gentle ? { topK: 5, concurrency: 2 } : { topK: 5 };
 
   // Run expert detail search and Scholar profile lookup in parallel
   const [searchResults, scholarProfileUrl] = await Promise.all([
-    multiSearch(buildExpertDetailQueries(name, englishName, org, topic), friday),
+    multiSearch(buildExpertDetailQueries(name, englishName, org, topic), searchOpts),
     findScholarProfileUrl(name, englishName, org, englishOrg, topic).catch(() => null),
   ]);
 
   if (searchResults.length === 0) {
     // IMPORTANT: do NOT cache this path. Zero search results for a verified
-    // expert (they passed Phase B, i.e. at least one Friday query already
+    // expert (they passed Phase B, i.e. at least one search query already
     // matched them with topic context) almost always means the search
-    // backend transiently failed / rate-limited — `fridaySearch` swallows
+    // backend transiently failed / rate-limited — `webSearch` swallows
     // errors and returns []. Caching would pin a 1h "未搜索到相关公开信息"
     // screen even though the real cause is backpressure that cleared in
     // seconds. Let the next caller retry.
@@ -194,7 +194,7 @@ async function doFetchExpertDetail(
  * (`.catch(() => {})`) so this runs in the background alongside the
  * briefing generation phases.
  *
- * Concurrency is intentionally capped: each task makes ~5 Friday searches
+ * Concurrency is intentionally capped: each task makes ~5 search calls
  * + 1 Haiku call + several Bing (Scholar) searches, so unbounded parallelism
  * would hammer the LLM/search APIs that the main briefing pipeline is also
  * using at the same time.

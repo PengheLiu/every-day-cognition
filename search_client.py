@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
-Friday 通用搜索客户端
+通用 Web 搜索客户端（参考实现）
 接口：POST /tools/universal-search/api/v1
+
+这是 web/src/lib/search.ts 的 Python 等价物，用来单独调试 / 批量跑脚本。
+实际 web 端不依赖本文件。
 """
 
 import os
@@ -15,8 +18,8 @@ load_dotenv()
 
 
 @dataclass
-class FridaySearchParams:
-    """Friday 通用搜索请求参数"""
+class SearchParams:
+    """通用搜索请求参数"""
     query: str
     sources: List[str] = field(default_factory=lambda: ["baidu-search-v2"])
     top_k: int = 10
@@ -33,7 +36,7 @@ class FridaySearchParams:
 
 
 @dataclass
-class FridaySearchResult:
+class SearchResult:
     """单条搜索结果"""
     url: str = ""
     title: str = ""
@@ -44,38 +47,41 @@ class FridaySearchResult:
 
 
 @dataclass
-class FridaySearchResponse:
-    """Friday 搜索响应"""
+class SearchResponse:
+    """搜索响应"""
     status: int = 0
     message: str = ""
     code: int = 0
     msg: str = ""
-    results: List[FridaySearchResult] = field(default_factory=list)
+    results: List[SearchResult] = field(default_factory=list)
     internal_err_map: Dict[str, str] = field(default_factory=dict)
     raw: Dict[str, Any] = field(default_factory=dict)
 
 
-class FridaySearchClient:
-    """Friday 通用搜索 API 客户端"""
+class SearchClient:
+    """通用 Web 搜索 API 客户端"""
 
     def __init__(
         self,
-        url: str = "http://agi.sankuai.com/tools/universal-search/api/v1",
+        url: Optional[str] = None,
         api_key: Optional[str] = None,
     ):
-        self.url = url
-        self.api_key = api_key or os.getenv("MT_LLM_API_KEY", "")
+        self.url = url or os.getenv("SEARCH_API_URL", "")
+        self.api_key = api_key or os.getenv("SEARCH_API_KEY", "")
 
-    def search(self, params: FridaySearchParams) -> FridaySearchResponse:
+    def search(self, params: SearchParams) -> SearchResponse:
         """
-        调用 Friday 通用搜索接口
+        调用通用搜索接口
 
         Args:
             params: 搜索参数
 
         Returns:
-            FridaySearchResponse
+            SearchResponse
         """
+        if not self.url:
+            return SearchResponse(status=-1, message="SEARCH_API_URL not configured")
+
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json;charset=UTF-8",
@@ -122,9 +128,9 @@ class FridaySearchClient:
             response.raise_for_status()
             data = response.json()
         except requests.exceptions.RequestException as e:
-            return FridaySearchResponse(status=-1, message=str(e))
+            return SearchResponse(status=-1, message=str(e))
 
-        resp = FridaySearchResponse(
+        resp = SearchResponse(
             status=data.get("status", 0),
             message=data.get("message", ""),
             raw=data,
@@ -136,7 +142,7 @@ class FridaySearchClient:
         resp.internal_err_map = inner.get("internal_err_map", {})
 
         for item in inner.get("results", []) or []:
-            resp.results.append(FridaySearchResult(
+            resp.results.append(SearchResult(
                 url=item.get("url", ""),
                 title=item.get("title", ""),
                 snippet=item.get("snippet", ""),
@@ -147,16 +153,16 @@ class FridaySearchClient:
 
         return resp
 
-    def quick_search(self, query: str, top_k: int = 10, sources: Optional[List[str]] = None) -> FridaySearchResponse:
+    def quick_search(self, query: str, top_k: int = 10, sources: Optional[List[str]] = None) -> SearchResponse:
         """便捷方法"""
-        return self.search(FridaySearchParams(
+        return self.search(SearchParams(
             query=query,
             sources=sources or ["baidu-search-v2"],
             top_k=top_k,
         ))
 
 
-def print_friday_result(resp: FridaySearchResponse):
+def print_search_result(resp: SearchResponse):
     """格式化打印搜索结果"""
     print(f"状态: {resp.status}, 消息: {resp.message}")
     print(f"内部状态: code={resp.code}, msg={resp.msg}")
@@ -178,6 +184,6 @@ if __name__ == "__main__":
     query = sys.argv[1] if len(sys.argv) > 1 else "北京有什么好吃的"
     print(f"搜索: {query}")
 
-    client = FridaySearchClient()
+    client = SearchClient()
     resp = client.quick_search(query, top_k=5)
-    print_friday_result(resp)
+    print_search_result(resp)

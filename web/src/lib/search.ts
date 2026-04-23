@@ -1,13 +1,17 @@
 /**
- * Search service — uses Friday universal search API (Baidu + Bing backends)
- * and web crawl API for fetching full page content.
+ * Search service — calls a universal web search API (Baidu + Bing backends)
+ * and a web crawl API for fetching full page content.
+ *
+ * The reference implementation targets an internal gateway, but the request
+ * shape is generic — swap the URL + key for Tavily / Serper / Brave / etc.
+ * by adjusting the request body in `webSearch` below.
  */
 
 import { chatCompletion, FAST_MODEL } from "./openrouter";
 
-const FRIDAY_SEARCH_URL = process.env.FRIDAY_SEARCH_URL || "http://agi.sankuai.com/tools/universal-search/api/v1";
-const FRIDAY_API_KEY = process.env.FRIDAY_API_KEY || "";
-const CRAWL_API_URL = process.env.CRAWL_API_URL || "http://agi.sankuai.com/sa/web_browse/crawl_and_parse";
+const SEARCH_API_URL = process.env.SEARCH_API_URL || "";
+const SEARCH_API_KEY = process.env.SEARCH_API_KEY || "";
+const CRAWL_API_URL = process.env.CRAWL_API_URL || "";
 
 export interface SearchResultItem {
   url: string;
@@ -19,12 +23,12 @@ export interface SearchResultItem {
 }
 
 /**
- * Search using Friday universal search API.
+ * Search using the universal web search API.
  * - `baidu-search-v2`: best for Chinese-language content
  * - `bing`: best for English content, international sites, and anything blocked
  *   by the GFW (e.g. scholar.google.com, twitter.com)
  */
-export async function fridaySearch(
+export async function webSearch(
   query: string,
   options: {
     topK?: number;
@@ -49,10 +53,15 @@ export async function fridaySearch(
   }
 
   try {
-    const res = await fetch(FRIDAY_SEARCH_URL, {
+    if (!SEARCH_API_URL) {
+      console.error("webSearch: SEARCH_API_URL not set — configure it in .env.local");
+      return [];
+    }
+
+    const res = await fetch(SEARCH_API_URL, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${FRIDAY_API_KEY}`,
+        Authorization: `Bearer ${SEARCH_API_KEY}`,
         "Content-Type": "application/json;charset=UTF-8",
       },
       body: JSON.stringify(body),
@@ -60,7 +69,7 @@ export async function fridaySearch(
     });
 
     if (!res.ok) {
-      console.error(`Friday search error: ${res.status}`);
+      console.error(`Search API error: ${res.status}`);
       return [];
     }
 
@@ -76,7 +85,7 @@ export async function fridaySearch(
       publishTime: item.publish_time || "",
     }));
   } catch (err) {
-    console.error("Friday search failed:", err);
+    console.error("Search API request failed:", err);
     return [];
   }
 }
@@ -89,10 +98,10 @@ export async function crawlPages(
   timeoutMs = 20000
 ): Promise<{ url: string; title: string; text: string }[]> {
   try {
+    if (!CRAWL_API_URL) return [];
     const res = await fetch(CRAWL_API_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      // Basic auth: beam:mima_for_beam
       body: JSON.stringify({
         urls,
         timeout_in_ms: timeoutMs,
@@ -239,7 +248,7 @@ export async function findScholarProfileUrl(
     opts: { siteRestrict?: boolean; topK?: number } = {}
   ): Promise<string | null> => {
     const { siteRestrict = true, topK = 5 } = opts;
-    const results = await fridaySearch(query, {
+    const results = await webSearch(query, {
       sources: ["bing"],
       topK,
       siteRestrictions: siteRestrict ? ["scholar.google.com"] : undefined,
@@ -274,7 +283,7 @@ export async function findScholarProfileUrl(
 /**
  * Run multiple search queries and deduplicate results by URL.
  *
- * `concurrency` caps how many fridaySearch calls are in flight at once.
+ * `concurrency` caps how many webSearch calls are in flight at once.
  * Default = `queries.length` (all parallel — original behavior, fastest).
  * Pass a small value (e.g. 2) when this is being called as part of a
  * background batch (prewarm) that would otherwise burst the search backend
@@ -297,7 +306,7 @@ export async function multiSearch(
         while (queue.length > 0) {
           const q = queue.shift();
           if (!q) break;
-          batches.push(await fridaySearch(q, { topK }));
+          batches.push(await webSearch(q, { topK }));
         }
       })()
     );
